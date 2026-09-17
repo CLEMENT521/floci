@@ -81,6 +81,21 @@ class Ec2InstanceCfnProvisionerTest {
     }
 
     @Test
+    void provisionsAnInstanceDeclaredWithNoProperties() {
+        Instance instance = new Instance();
+        instance.setInstanceId("i-3");
+        stubLaunch(instance);
+        StackResource r = resource("Server");
+
+        // A bare {"Type": "AWS::EC2::Instance"} has no Properties, so props is null. The registry
+        // schema lists no required properties, so this is a valid template.
+        provisioner.provision(r, null, ctx());
+
+        assertEquals("i-3", r.getPhysicalId());
+        assertEquals("i-3", r.getAttributes().get("InstanceId"));
+    }
+
+    @Test
     void deleteTerminatesTheInstance() {
         provisioner.delete(TYPE, "i-1", "us-east-1");
 

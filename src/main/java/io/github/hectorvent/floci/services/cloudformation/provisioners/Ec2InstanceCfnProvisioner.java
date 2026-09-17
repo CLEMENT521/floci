@@ -99,11 +99,13 @@ public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
         // The launch-time public-IP override rides on the primary network
         // interface spec; absent means the subnet's MapPublicIpOnLaunch default.
         Boolean associatePublicIp = null;
-        JsonNode networkInterfaces = props.path("NetworkInterfaces");
-        if (networkInterfaces.isArray() && !networkInterfaces.isEmpty()) {
-            String assocRaw = engine.resolve(networkInterfaces.get(0).path("AssociatePublicIpAddress"));
-            if (assocRaw != null && !assocRaw.isBlank()) {
-                associatePublicIp = Boolean.parseBoolean(assocRaw);
+        if (props != null) {
+            JsonNode networkInterfaces = props.path("NetworkInterfaces");
+            if (networkInterfaces.isArray() && !networkInterfaces.isEmpty()) {
+                String assocRaw = engine.resolve(networkInterfaces.get(0).path("AssociatePublicIpAddress"));
+                if (assocRaw != null && !assocRaw.isBlank()) {
+                    associatePublicIp = Boolean.parseBoolean(assocRaw);
+                }
             }
         }
 
