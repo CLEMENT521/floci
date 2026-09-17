@@ -998,7 +998,7 @@ public interface EmulatorConfig {
         /** When set, Floci uses this URL and skips Cedar sidecar container management. */
         Optional<String> cedarUrl();
 
-        @WithDefault("floci/floci:latest-cedar")
+        @WithDefault("floci/floci-sidecar-cedar:1.1.0")
         String cedarImage();
     }
 
