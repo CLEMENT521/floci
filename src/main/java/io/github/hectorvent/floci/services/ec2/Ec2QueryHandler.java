@@ -149,7 +149,7 @@ public class Ec2QueryHandler {
                 case "SearchTransitGatewayRoutes" -> handleSearchTransitGatewayRoutes(params, region);
                 case "ExportTransitGatewayRoutes" -> handleExportTransitGatewayRoutes(params, region);
                 case "DescribeEgressOnlyInternetGateways" ->
-                        handleDescribeEgressOnlyInternetGateways(params, region);
+                        handleDescribeEgressOnlyInternetGateways(params);
                 case "CreateDefaultVpc" -> handleCreateDefaultVpc(params, region);
                 case "AssociateVpcCidrBlock" -> handleAssociateVpcCidrBlock(params, region);
                 case "DisassociateVpcCidrBlock" -> handleDisassociateVpcCidrBlock(params, region);
@@ -198,7 +198,7 @@ public class Ec2QueryHandler {
                 // VPN Gateways. There is no VPN gateway model; an empty set is
                 // AWS-accurate for an account without VPN gateways and unblocks the
                 // CDK VPC context provider, which always issues this describe.
-                case "DescribeVpnGateways" -> handleDescribeVpnGateways(params, region);
+                case "DescribeVpnGateways" -> handleDescribeVpnGateways(params);
 
                 // Route Tables
                 case "CreateRouteTable" -> handleCreateRouteTable(params, region);
@@ -2745,11 +2745,10 @@ public class Ec2QueryHandler {
         }
     }
 
-    private Response handleDescribeEgressOnlyInternetGateways(
-            MultivaluedMap<String, String> p, String region) {
+    private Response handleDescribeEgressOnlyInternetGateways(MultivaluedMap<String, String> p) {
         validateEmptyDiscoveryPagination(p, 255);
         service.describeEgressOnlyInternetGatewayIds(
-                region, getList(p, "EgressOnlyInternetGatewayId"), getFilters(p));
+                getList(p, "EgressOnlyInternetGatewayId"), getFilters(p));
         return emptyDescribeResponse(
                 "DescribeEgressOnlyInternetGateways", "egressOnlyInternetGatewaySet");
     }
@@ -3510,8 +3509,8 @@ public class Ec2QueryHandler {
         return xmlResponse(xml.build());
     }
 
-    private Response handleDescribeVpnGateways(MultivaluedMap<String, String> p, String region) {
-        service.describeVpnGatewayIds(region, getList(p, "VpnGatewayId"), getFilters(p));
+    private Response handleDescribeVpnGateways(MultivaluedMap<String, String> p) {
+        service.describeVpnGatewayIds(getList(p, "VpnGatewayId"), getFilters(p));
         return emptyDescribeResponse("DescribeVpnGateways", "vpnGatewaySet");
     }
 

@@ -3570,14 +3570,14 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
     }
 
     public List<String> describeVpnGatewayIds(
-            String region, List<String> gatewayIds, Map<String, List<String>> filters) {
+            List<String> gatewayIds, Map<String, List<String>> filters) {
         return emptyNetworkDiscovery(gatewayIds, filters, VPN_GATEWAY_FILTERS,
                 "InvalidVpnGatewayID.NotFound",
                 "The vpnGateway ID '%s' does not exist");
     }
 
     public List<String> describeEgressOnlyInternetGatewayIds(
-            String region, List<String> gatewayIds, Map<String, List<String>> filters) {
+            List<String> gatewayIds, Map<String, List<String>> filters) {
         return emptyNetworkDiscovery(gatewayIds, filters, EGRESS_ONLY_INTERNET_GATEWAY_FILTERS,
                 "InvalidEgressOnlyInternetGatewayId.NotFound",
                 "The egress-only internet gateway ID '%s' does not exist");
