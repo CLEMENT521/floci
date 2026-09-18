@@ -4510,9 +4510,20 @@ class Ec2IntegrationTest {
             .formParam("TagSpecification.1.ResourceType", "subnet")
             .formParam("TagSpecification.1.Tag.1.Key", "Name")
             .formParam("TagSpecification.1.Tag.1.Value", "tagged-subnet")
+            .formParam("TagSpecification.2.ResourceType", "subnet")
+            .formParam("TagSpecification.2.Tag.1.Key", "omitted-value")
+            .formParam("TagSpecification.2.Tag.2.Key", "explicit-empty-value")
+            .formParam("TagSpecification.2.Tag.2.Value", "")
             .header("Authorization", AUTH_HEADER)
         .when().post("/")
-        .then().statusCode(200)
+        .then()
+            .statusCode(200)
+            .body("CreateSubnetResponse.subnet.tagSet.item.find { it.key == 'Name' }.value",
+                    equalTo("tagged-subnet"))
+            .body("CreateSubnetResponse.subnet.tagSet.item.find { it.key == 'omitted-value' }.value",
+                    equalTo(""))
+            .body("CreateSubnetResponse.subnet.tagSet.item.find { it.key == 'explicit-empty-value' }.value",
+                    equalTo(""))
             .extract().path("CreateSubnetResponse.subnet.subnetId");
 
         given()
@@ -4522,8 +4533,27 @@ class Ec2IntegrationTest {
         .when().post("/")
         .then()
             .statusCode(200)
-            .body("DescribeSubnetsResponse.subnetSet.item.tagSet.item.key", equalTo("Name"))
-            .body("DescribeSubnetsResponse.subnetSet.item.tagSet.item.value", equalTo("tagged-subnet"));
+            .body("DescribeSubnetsResponse.subnetSet.item.tagSet.item.find { it.key == 'Name' }.value",
+                    equalTo("tagged-subnet"))
+            .body("DescribeSubnetsResponse.subnetSet.item.tagSet.item.find { it.key == 'omitted-value' }.value",
+                    equalTo(""))
+            .body("DescribeSubnetsResponse.subnetSet.item.tagSet.item.find { it.key == 'explicit-empty-value' }.value",
+                    equalTo(""));
+
+        given()
+            .formParam("Action", "DescribeTags")
+            .formParam("Filter.1.Name", "resource-id")
+            .formParam("Filter.1.Value.1", subnet)
+            .header("Authorization", AUTH_HEADER)
+        .when().post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeTagsResponse.tagSet.item.find { it.key == 'Name' }.value",
+                    equalTo("tagged-subnet"))
+            .body("DescribeTagsResponse.tagSet.item.find { it.key == 'omitted-value' }.value",
+                    equalTo(""))
+            .body("DescribeTagsResponse.tagSet.item.find { it.key == 'explicit-empty-value' }.value",
+                    equalTo(""));
     }
 
     @Test

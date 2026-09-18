@@ -518,7 +518,7 @@ public class Ec2QueryHandler {
                         String key = p.getFirst(prefix + "." + i + ".Tag." + j + ".Key");
                         if (key == null) break;
                         String value = p.getFirst(prefix + "." + i + ".Tag." + j + ".Value");
-                        tags.add(new Tag(key, value));
+                        tags.add(new Tag(key, value == null ? "" : value));
                     }
                 }
             }
