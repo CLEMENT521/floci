@@ -3570,11 +3570,49 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
             requireNoTransitGatewayAttachment(region,
                     attachment -> vpcId.equals(attachment.getVpcId()),
                     "The vpc '" + vpcId + "' has dependencies and cannot be deleted.");
+            deleteVpcDefaultResources(region, vpcId);
             vpcs.delete(key(region, vpcId));
         }
         if (vpcNetworkManager != null) {
             vpcNetworkManager.deleteVpcNetwork(region, vpcId);
         }
+    }
+
+    private void deleteVpcDefaultResources(String region, String vpcId) {
+        List<SecurityGroup> defaultGroups = securityGroups.scan(k -> k.startsWith(region + "::")).stream()
+                .filter(group -> region.equals(group.getRegion()))
+                .filter(group -> vpcId.equals(group.getVpcId()))
+                .filter(group -> "default".equals(group.getGroupName()))
+                .toList();
+        for (SecurityGroup group : defaultGroups) {
+            // Same lock the authorize/revoke paths hold while they read and re-save a group; without
+            // it, one of them can save the group back after this delete and resurrect it.
+            synchronized (lockFor(key(region, group.getGroupId()))) {
+                List<String> ruleIds = securityGroupRules.scan(k -> k.startsWith(region + "::")).stream()
+                        .filter(rule -> group.getGroupId().equals(rule.getGroupId()))
+                        .map(SecurityGroupRule::getSecurityGroupRuleId)
+                        .toList();
+                ruleIds.forEach(ruleId -> securityGroupRules.delete(key(region, ruleId)));
+                securityGroups.delete(key(region, group.getGroupId()));
+            }
+        }
+
+        List<String> mainRouteTableIds = routeTables.scan(k -> k.startsWith(region + "::")).stream()
+                .filter(table -> region.equals(table.getRegion()))
+                .filter(table -> vpcId.equals(table.getVpcId()))
+                .filter(table -> table.getAssociations().stream()
+                        .anyMatch(association -> association.isMain()))
+                .map(RouteTable::getRouteTableId)
+                .toList();
+        mainRouteTableIds.forEach(routeTableId -> routeTables.delete(key(region, routeTableId)));
+
+        List<String> defaultNetworkAclIds = networkAcls.scan(k -> k.startsWith(region + "::")).stream()
+                .filter(acl -> region.equals(acl.getRegion()))
+                .filter(acl -> vpcId.equals(acl.getVpcId()))
+                .filter(acl -> acl.isDefault())
+                .map(NetworkAcl::getNetworkAclId)
+                .toList();
+        defaultNetworkAclIds.forEach(aclId -> networkAcls.delete(key(region, aclId)));
     }
 
     public void modifyVpcAttribute(String region, String vpcId, String attribute, String value) {

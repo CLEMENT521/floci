@@ -42,6 +42,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -59,6 +60,34 @@ import static org.mockito.Mockito.when;
 class Ec2ServicePersistenceTest {
 
     private static final String REGION = "us-east-1";
+
+    @Test
+    void deletedVpcDefaultResourcesRemainAbsentAfterRestart(@TempDir Path dir) {
+        Ec2Service first = newService(dir);
+        Vpc vpc = first.createVpc(REGION, "10.77.0.0/16", false);
+        SecurityGroup defaultGroup = first.describeSecurityGroups(REGION, List.of(), List.of(), Map.of()).stream()
+                .filter(group -> vpc.getVpcId().equals(group.getVpcId()) && "default".equals(group.getGroupName()))
+                .findFirst().orElseThrow();
+        String mainRouteTableId = first.describeRouteTables(REGION, List.of(), Map.of()).stream()
+                .filter(table -> vpc.getVpcId().equals(table.getVpcId()))
+                .filter(table -> table.getAssociations().stream().anyMatch(association -> association.isMain()))
+                .findFirst().orElseThrow().getRouteTableId();
+        String defaultNetworkAclId = first.describeNetworkAcls(REGION, List.of(), Map.of()).stream()
+                .filter(acl -> vpc.getVpcId().equals(acl.getVpcId()) && acl.isDefault())
+                .findFirst().orElseThrow().getNetworkAclId();
+
+        first.deleteVpc(REGION, vpc.getVpcId());
+        Ec2Service restarted = newService(dir);
+
+        assertTrue(restarted.describeVpcs(REGION, List.of(), Map.of()).stream()
+                .noneMatch(candidate -> vpc.getVpcId().equals(candidate.getVpcId())));
+        assertTrue(restarted.describeSecurityGroups(
+                REGION, List.of(defaultGroup.getGroupId()), List.of(), Map.of()).isEmpty());
+        assertTrue(restarted.describeSecurityGroupRules(
+                REGION, List.of(defaultGroup.getGroupId()), List.of()).isEmpty());
+        assertTrue(restarted.describeRouteTables(REGION, List.of(mainRouteTableId), Map.of()).isEmpty());
+        assertTrue(restarted.describeNetworkAcls(REGION, List.of(defaultNetworkAclId), Map.of()).isEmpty());
+    }
 
     @Test
     void vpcAndSubnetSurviveRestart(@TempDir Path dir) {
