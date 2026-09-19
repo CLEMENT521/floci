@@ -68,25 +68,20 @@ class Ec2ServicePersistenceTest {
         SecurityGroup defaultGroup = first.describeSecurityGroups(REGION, List.of(), List.of(), Map.of()).stream()
                 .filter(group -> vpc.getVpcId().equals(group.getVpcId()) && "default".equals(group.getGroupName()))
                 .findFirst().orElseThrow();
-        String mainRouteTableId = first.describeRouteTables(REGION, List.of(), Map.of()).stream()
-                .filter(table -> vpc.getVpcId().equals(table.getVpcId()))
-                .filter(table -> table.getAssociations().stream().anyMatch(association -> association.isMain()))
-                .findFirst().orElseThrow().getRouteTableId();
-        String defaultNetworkAclId = first.describeNetworkAcls(REGION, List.of(), Map.of()).stream()
-                .filter(acl -> vpc.getVpcId().equals(acl.getVpcId()) && acl.isDefault())
-                .findFirst().orElseThrow().getNetworkAclId();
 
         first.deleteVpc(REGION, vpc.getVpcId());
         Ec2Service restarted = newService(dir);
 
         assertTrue(restarted.describeVpcs(REGION, List.of(), Map.of()).stream()
                 .noneMatch(candidate -> vpc.getVpcId().equals(candidate.getVpcId())));
-        assertTrue(restarted.describeSecurityGroups(
-                REGION, List.of(defaultGroup.getGroupId()), List.of(), Map.of()).isEmpty());
+        assertTrue(restarted.describeSecurityGroups(REGION, List.of(), List.of(), Map.of()).stream()
+                .noneMatch(group -> vpc.getVpcId().equals(group.getVpcId())));
         assertTrue(restarted.describeSecurityGroupRules(
                 REGION, List.of(defaultGroup.getGroupId()), List.of()).isEmpty());
-        assertTrue(restarted.describeRouteTables(REGION, List.of(mainRouteTableId), Map.of()).isEmpty());
-        assertTrue(restarted.describeNetworkAcls(REGION, List.of(defaultNetworkAclId), Map.of()).isEmpty());
+        assertTrue(restarted.describeRouteTables(REGION, List.of(), Map.of()).stream()
+                .noneMatch(table -> vpc.getVpcId().equals(table.getVpcId())));
+        assertTrue(restarted.describeNetworkAcls(REGION, List.of(), Map.of()).stream()
+                .noneMatch(acl -> vpc.getVpcId().equals(acl.getVpcId())));
     }
 
     @Test

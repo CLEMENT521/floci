@@ -5,8 +5,6 @@ import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.CreateVpcRequest;
 import software.amazon.awssdk.services.ec2.model.DeleteVpcRequest;
 import software.amazon.awssdk.services.ec2.model.Filter;
-import software.amazon.awssdk.services.ec2.model.NetworkAcl;
-import software.amazon.awssdk.services.ec2.model.RouteTable;
 import software.amazon.awssdk.services.ec2.model.SecurityGroup;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,25 +24,21 @@ class Ec2VpcDefaultResourceCleanupTest {
                     .securityGroups().stream()
                     .filter(group -> "default".equals(group.groupName()))
                     .findFirst().orElseThrow();
-            RouteTable mainRouteTable = ec2.describeRouteTables(request -> request.filters(vpcFilter))
-                    .routeTables().stream()
-                    .filter(table -> table.associations().stream().anyMatch(association -> association.main()))
-                    .findFirst().orElseThrow();
-            NetworkAcl defaultNetworkAcl = ec2.describeNetworkAcls(request -> request.filters(vpcFilter))
-                    .networkAcls().stream()
-                    .filter(acl -> acl.isDefault())
-                    .findFirst().orElseThrow();
+            assertThat(ec2.describeRouteTables(request -> request.filters(vpcFilter)).routeTables())
+                    .anyMatch(table -> table.associations().stream().anyMatch(association -> association.main()));
+            assertThat(ec2.describeNetworkAcls(request -> request.filters(vpcFilter)).networkAcls())
+                    .anyMatch(acl -> acl.isDefault());
             Filter groupFilter = Filter.builder().name("group-id").values(defaultGroup.groupId()).build();
             assertThat(ec2.describeSecurityGroupRules(request -> request.filters(groupFilter))
                     .securityGroupRules()).isNotEmpty();
 
             ec2.deleteVpc(DeleteVpcRequest.builder().vpcId(vpcId).build());
 
-            assertThat(ec2.describeSecurityGroups(request -> request.groupIds(defaultGroup.groupId()))
+            assertThat(ec2.describeSecurityGroups(request -> request.filters(vpcFilter))
                     .securityGroups()).isEmpty();
-            assertThat(ec2.describeRouteTables(request -> request.routeTableIds(mainRouteTable.routeTableId()))
+            assertThat(ec2.describeRouteTables(request -> request.filters(vpcFilter))
                     .routeTables()).isEmpty();
-            assertThat(ec2.describeNetworkAcls(request -> request.networkAclIds(defaultNetworkAcl.networkAclId()))
+            assertThat(ec2.describeNetworkAcls(request -> request.filters(vpcFilter))
                     .networkAcls()).isEmpty();
             assertThat(ec2.describeSecurityGroupRules(request -> request.filters(groupFilter))
                     .securityGroupRules()).isEmpty();

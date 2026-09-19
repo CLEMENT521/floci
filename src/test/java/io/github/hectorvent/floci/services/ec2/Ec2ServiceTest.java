@@ -91,20 +91,21 @@ class Ec2ServiceTest {
         SecurityGroup defaultGroup = service.describeSecurityGroups(region, List.of(), List.of(), Map.of()).stream()
                 .filter(group -> vpcId.equals(group.getVpcId()) && "default".equals(group.getGroupName()))
                 .findFirst().orElseThrow();
-        String mainRouteTableId = service.describeRouteTables(region, List.of(), Map.of()).stream()
-                .filter(table -> vpcId.equals(table.getVpcId()))
-                .filter(table -> table.getAssociations().stream().anyMatch(association -> association.isMain()))
-                .findFirst().orElseThrow().getRouteTableId();
-        String defaultNetworkAclId = service.describeNetworkAcls(region, List.of(), Map.of()).stream()
-                .filter(acl -> vpcId.equals(acl.getVpcId()) && acl.isDefault())
-                .findFirst().orElseThrow().getNetworkAclId();
+        assertTrue(service.describeRouteTables(region, List.of(), Map.of()).stream()
+                .anyMatch(table -> vpcId.equals(table.getVpcId())
+                        && table.getAssociations().stream().anyMatch(association -> association.isMain())));
+        assertTrue(service.describeNetworkAcls(region, List.of(), Map.of()).stream()
+                .anyMatch(acl -> vpcId.equals(acl.getVpcId()) && acl.isDefault()));
         assertFalse(service.describeSecurityGroupRules(region, List.of(defaultGroup.getGroupId()), List.of()).isEmpty());
 
         service.deleteVpc(region, vpcId);
 
-        assertTrue(service.describeSecurityGroups(region, List.of(defaultGroup.getGroupId()), List.of(), Map.of()).isEmpty());
-        assertTrue(service.describeRouteTables(region, List.of(mainRouteTableId), Map.of()).isEmpty());
-        assertTrue(service.describeNetworkAcls(region, List.of(defaultNetworkAclId), Map.of()).isEmpty());
+        assertTrue(service.describeSecurityGroups(region, List.of(), List.of(), Map.of()).stream()
+                .noneMatch(group -> vpcId.equals(group.getVpcId())));
+        assertTrue(service.describeRouteTables(region, List.of(), Map.of()).stream()
+                .noneMatch(table -> vpcId.equals(table.getVpcId())));
+        assertTrue(service.describeNetworkAcls(region, List.of(), Map.of()).stream()
+                .noneMatch(acl -> vpcId.equals(acl.getVpcId())));
         assertTrue(service.describeSecurityGroupRules(region, List.of(defaultGroup.getGroupId()), List.of()).isEmpty());
     }
 
