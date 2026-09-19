@@ -518,7 +518,7 @@ public class Ec2QueryHandler {
                         String key = p.getFirst(prefix + "." + i + ".Tag." + j + ".Key");
                         if (key == null) break;
                         String value = p.getFirst(prefix + "." + i + ".Tag." + j + ".Value");
-                        tags.add(new Tag(key, value == null ? "" : value));
+                        tags.add(creationTag(key, value));
                     }
                 }
             }
@@ -728,7 +728,7 @@ public class Ec2QueryHandler {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    target.add(new Tag(k, v));
+                    target.add(creationTag(k, v));
                 }
             }
         }
@@ -1465,7 +1465,7 @@ public class Ec2QueryHandler {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    vpcTags.add(new Tag(k, v));
+                    vpcTags.add(creationTag(k, v));
                 }
             }
         }
@@ -3366,6 +3366,12 @@ public class Ec2QueryHandler {
 
     // ─── Tag handlers ─────────────────────────────────────────────────────────
 
+    // AWS stores a tag created without a Value as an empty string. DeleteTags is the exception:
+    // there an omitted value means "any value", so it builds its Tag objects directly.
+    private static Tag creationTag(String key, String value) {
+        return new Tag(key, value == null ? "" : value);
+    }
+
     private Response handleCreateTags(MultivaluedMap<String, String> p, String region) {
         List<String> resourceIds = getList(p, "ResourceId");
         List<Tag> tagList = new ArrayList<>();
@@ -3373,7 +3379,7 @@ public class Ec2QueryHandler {
             String k = p.getFirst("Tag." + i + ".Key");
             if (k == null) break;
             String v = p.getFirst("Tag." + i + ".Value");
-            tagList.add(new Tag(k, v));
+            tagList.add(creationTag(k, v));
         }
         service.createTags(region, resourceIds, tagList);
         return booleanResponse("CreateTags");
@@ -5351,7 +5357,7 @@ public class Ec2QueryHandler {
                 if (key == null) {
                     break;
                 }
-                tagList.add(new Tag(key, p.getFirst(base + ".Tag." + j + ".Value")));
+                tagList.add(creationTag(key, p.getFirst(base + ".Tag." + j + ".Value")));
             }
             specs.add(new LaunchTemplateData.TagSpecification(resourceType, tagList));
         }
@@ -5573,7 +5579,7 @@ public class Ec2QueryHandler {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    volumeTags.add(new Tag(k, v));
+                    volumeTags.add(creationTag(k, v));
                 }
             }
         }
@@ -5752,14 +5758,14 @@ public class Ec2QueryHandler {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    spotRequestTags.add(new Tag(k, v));
+                    spotRequestTags.add(creationTag(k, v));
                 }
             } else if ("instance".equals(resType)) {
                 for (int j = 1; ; j++) {
                     String k = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Key");
                     if (k == null) break;
                     String v = p.getFirst("TagSpecification." + i + ".Tag." + j + ".Value");
-                    instanceTags.add(new Tag(k, v));
+                    instanceTags.add(creationTag(k, v));
                 }
             }
         }
