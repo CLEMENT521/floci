@@ -259,11 +259,13 @@ also checked against that policy's length and character-class requirements, with
 `PasswordPolicyViolation` returned on either action if it doesn't comply. The password itself is never
 echoed back by any of these actions, matching AWS.
 
-`DeleteUser` on a user that still has a login profile returns `DeleteConflict`, as on AWS: delete
-the profile first. Renaming a user with `UpdateUser` carries its login profile to the new name.
-Floci still does not require access keys, inline policies, or other credentials to be removed
-before `DeleteUser`; only attached managed policies, group membership, and the login profile block
-it.
+`DeleteUser` returns `DeleteConflict`, as on AWS, while the user still has a login profile, access
+keys, inline policies, attached managed policies, or group memberships: remove those first. Floci
+has no actions that create signing certificates, SSH public keys, Git credentials, or MFA devices,
+so there is nothing of those kinds to block on. Renaming a user with `UpdateUser` carries its login
+profile, access keys, and group membership to the new name. Unlike AWS, Floci does not rewrite
+policy documents that name the user's ARN, so a resource or trust policy that referred to the old
+name still refers to it after a rename.
 
 ### Policy Simulation
 
