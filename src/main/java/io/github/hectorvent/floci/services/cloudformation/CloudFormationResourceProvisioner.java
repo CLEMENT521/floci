@@ -108,8 +108,6 @@ public class CloudFormationResourceProvisioner {
             "AWS::ApiGatewayV2::Route",
             "AWS::ApiGatewayV2::Stage",
             "AWS::CloudFormation::CustomResource",
-            "AWS::IAM::AccessKey",
-            "AWS::IAM::InstanceProfile",
             "AWS::IAM::ManagedPolicy",
             "AWS::IAM::Policy",
             "AWS::Lambda::Function",
@@ -217,11 +215,9 @@ public class CloudFormationResourceProvisioner {
                 case "AWS::Lambda::Function" -> provisionLambda(resource, properties, engine, region, accountId, stackName);
                 case "AWS::Lambda::LayerVersion" ->
                         provisionLambdaLayerVersion(resource, properties, engine, region, stackName);
-                case "AWS::IAM::AccessKey" -> provisionIamAccessKey(resource, properties, engine);
                 case "AWS::IAM::Policy" -> provisionIamInlinePolicy(resource, properties, engine, stackName);
                 case "AWS::IAM::ManagedPolicy" ->
                         provisionIamManagedPolicy(resource, properties, engine, accountId, stackName);
-                case "AWS::IAM::InstanceProfile" -> provisionInstanceProfile(resource, properties, engine, accountId, stackName);
                 case "AWS::ApiGatewayV2::Api" -> provisionApiGatewayV2Api(resource, properties, engine, region, accountId, stackName);
                 case "AWS::ApiGatewayV2::Authorizer" -> provisionApiGatewayV2Authorizer(resource, properties, engine, region);
                 case "AWS::ApiGatewayV2::Route" -> provisionApiGatewayV2Route(resource, properties, engine, region);
@@ -425,7 +421,6 @@ public class CloudFormationResourceProvisioner {
             // Nothing to do here when only the physical id (policy name) is known, as on rollback.
             case "AWS::IAM::Policy" -> { }
             case "AWS::IAM::ManagedPolicy" -> deletePolicySafe(physicalId);
-            case "AWS::IAM::InstanceProfile" -> iamService.deleteInstanceProfile(physicalId);
             // No bus context on the type/physicalId path (e.g. CREATE-rollback); targets the default bus.
             case "AWS::ApiGatewayV2::Api" -> apiGatewayV2Service.deleteApi(region, physicalId);
             case "AWS::Lambda::LayerVersion" -> deleteLambdaLayerVersion(physicalId, region);
@@ -1530,22 +1525,6 @@ public class CloudFormationResourceProvisioner {
 
     // ── IAM Instance Profile ──────────────────────────────────────────────────
 
-    private void provisionInstanceProfile(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                          String accountId, String stackName) {
-        String name = resolveOptional(props, "InstanceProfileName", engine);
-        if (name == null || name.isBlank()) {
-            name = generatePhysicalName(stackName, r.getLogicalId(), 128, false);
-        }
-        try {
-            var profile = iamService.createInstanceProfile(name, "/");
-            r.setPhysicalId(name);
-            r.getAttributes().put("Arn", profile.getArn());
-        } catch (Exception e) {
-            r.setPhysicalId(name);
-            r.getAttributes().put("Arn", AwsArnUtils.Arn.of("iam", "", accountId, "instance-profile/" + name).toString());
-        }
-    }
-
     // ── Pipes ──────────────────────────────────────────────────────────────────
 
     /**
@@ -1616,15 +1595,6 @@ public class CloudFormationResourceProvisioner {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private void provisionIamAccessKey(StackResource r, JsonNode props, CloudFormationTemplateEngine engine) {
-        String userName = resolveOptional(props, "UserName", engine);
-        if (userName != null) {
-            var key = iamService.createAccessKey(userName);
-            r.setPhysicalId(key.getAccessKeyId());
-            r.getAttributes().put("SecretAccessKey", key.getSecretAccessKey());
-        }
-    }
 
     // ── ApiGateway (V1) ──────────────────────────────────────────────────────
 

@@ -86,8 +86,8 @@ AWS::ElasticLoadBalancingV2::TargetGroup	ElbV2CfnProvisioner
 AWS::Events::EventBus	EventsCfnProvisioner
 AWS::Events::EventBusPolicy	EventsCfnProvisioner
 AWS::Events::Rule	EventsCfnProvisioner
-AWS::IAM::AccessKey	LEGACY_SWITCH
-AWS::IAM::InstanceProfile	LEGACY_SWITCH
+AWS::IAM::AccessKey	IamAccessKeyCfnProvisioner
+AWS::IAM::InstanceProfile	IamInstanceProfileCfnProvisioner
 AWS::IAM::ManagedPolicy	LEGACY_SWITCH
 AWS::IAM::Policy	LEGACY_SWITCH
 AWS::IAM::Role	IamRoleCfnProvisioner
