@@ -3571,24 +3571,22 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
 
     public List<String> describeVpnGatewayIds(
             List<String> gatewayIds, Map<String, List<String>> filters) {
-        return emptyNetworkDiscovery(gatewayIds, filters, VPN_GATEWAY_FILTERS,
-                "InvalidVpnGatewayID.NotFound",
-                "The vpnGateway ID '%s' does not exist");
+        requireSupportedFilters(filters, VPN_GATEWAY_FILTERS);
+        if (!gatewayIds.isEmpty()) {
+            throw new AwsException("InvalidVpnGatewayID.NotFound",
+                    "The vpnGateway ID '" + gatewayIds.getFirst() + "' does not exist", 400);
+        }
+        return List.of();
     }
 
-    public List<String> describeEgressOnlyInternetGatewayIds(
-            List<String> gatewayIds, Map<String, List<String>> filters) {
-        return emptyNetworkDiscovery(gatewayIds, filters, EGRESS_ONLY_INTERNET_GATEWAY_FILTERS,
-                "InvalidEgressOnlyInternetGatewayId.NotFound",
-                "The egress-only internet gateway ID '%s' does not exist");
+    // AWS answers an unknown egress-only gateway ID with an empty set, not an error; callers such as
+    // the Terraform provider treat the empty result as "not found".
+    public List<String> describeEgressOnlyInternetGatewayIds(Map<String, List<String>> filters) {
+        requireSupportedFilters(filters, EGRESS_ONLY_INTERNET_GATEWAY_FILTERS);
+        return List.of();
     }
 
-    private List<String> emptyNetworkDiscovery(
-            List<String> resourceIds,
-            Map<String, List<String>> filters,
-            Set<String> supportedFilters,
-            String notFoundCode,
-            String notFoundMessage) {
+    private void requireSupportedFilters(Map<String, List<String>> filters, Set<String> supportedFilters) {
         filters.keySet().stream()
                 .filter(name -> !supportedFilters.contains(name)
                         && !(supportedFilters.contains("tag-key") && name.startsWith("tag:")))
@@ -3596,10 +3594,6 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
                 .ifPresent(name -> {
                     throw new AwsException("InvalidParameterValue", "The filter '" + name + "' is invalid", 400);
                 });
-        if (!resourceIds.isEmpty()) {
-            throw new AwsException(notFoundCode, notFoundMessage.formatted(resourceIds.getFirst()), 400);
-        }
-        return List.of();
     }
 
     public void deleteVpc(String region, String vpcId) {

@@ -1015,7 +1015,7 @@ class Ec2IntegrationTest {
 
     @Test
     @Order(324)
-    void describeEgressOnlyInternetGatewaysReturnsEmptySetAndNotFoundError() {
+    void describeEgressOnlyInternetGatewaysReturnsEmptySet() {
         given()
             .formParam("Action", "DescribeEgressOnlyInternetGateways")
             .formParam("Filter.1.Name", "tag:Owner")
@@ -1072,12 +1072,9 @@ class Ec2IntegrationTest {
         .when()
             .post("/")
         .then()
-            .statusCode(400)
-            .body("Response.Errors.Error.Code",
-                    equalTo("InvalidEgressOnlyInternetGatewayId.NotFound"))
-            .body("Response.Errors.Error.Message",
-                    equalTo("The egress-only internet gateway ID "
-                            + "'eigw-0123456789abcdef0' does not exist"));
+            .statusCode(200)
+            .body("DescribeEgressOnlyInternetGatewaysResponse.egressOnlyInternetGatewaySet.item.size()",
+                    equalTo(0));
     }
 
     @Test

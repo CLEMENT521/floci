@@ -2747,8 +2747,7 @@ public class Ec2QueryHandler {
 
     private Response handleDescribeEgressOnlyInternetGateways(MultivaluedMap<String, String> p) {
         validateEmptyDiscoveryPagination(p, 255);
-        service.describeEgressOnlyInternetGatewayIds(
-                getList(p, "EgressOnlyInternetGatewayId"), getFilters(p));
+        service.describeEgressOnlyInternetGatewayIds(getFilters(p));
         return emptyDescribeResponse(
                 "DescribeEgressOnlyInternetGateways", "egressOnlyInternetGatewaySet");
     }

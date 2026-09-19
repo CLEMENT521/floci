@@ -179,20 +179,11 @@ class Ec2ServiceTest {
 
         for (Map.Entry<String, List<String>> filter : supportedFilters.entrySet()) {
             assertTrue(service.describeEgressOnlyInternetGatewayIds(
-                    List.of(), Map.of(filter.getKey(), filter.getValue())).isEmpty());
+                    Map.of(filter.getKey(), filter.getValue())).isEmpty());
         }
-
-        AwsException error = assertThrows(AwsException.class,
-                () -> service.describeEgressOnlyInternetGatewayIds(
-                        List.of("eigw-0123456789abcdef0"), Map.of()));
-        assertEquals("InvalidEgressOnlyInternetGatewayId.NotFound", error.getErrorCode());
-        assertEquals("The egress-only internet gateway ID 'eigw-0123456789abcdef0' does not exist",
-                error.getMessage());
-        assertEquals(400, error.getHttpStatus());
 
         AwsException filterError = assertThrows(AwsException.class,
                 () -> service.describeEgressOnlyInternetGatewayIds(
-                        List.of(),
                         Map.of("unsupported", List.of("value"))));
         assertEquals("InvalidParameterValue", filterError.getErrorCode());
         assertEquals("The filter 'unsupported' is invalid", filterError.getMessage());

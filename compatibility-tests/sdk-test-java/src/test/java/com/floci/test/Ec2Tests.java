@@ -86,19 +86,10 @@ class Ec2Tests {
         assertThat(paged.egressOnlyInternetGateways()).isEmpty();
         assertThat(paged.nextToken()).isNull();
 
-        assertThatThrownBy(() -> ec2.describeEgressOnlyInternetGateways(
+        assertThat(ec2.describeEgressOnlyInternetGateways(
                 DescribeEgressOnlyInternetGatewaysRequest.builder()
                         .egressOnlyInternetGatewayIds("eigw-0123456789abcdef0")
-                        .build()))
-                .isInstanceOfSatisfying(Ec2Exception.class, error -> {
-                    assertThat(error.statusCode()).isEqualTo(400);
-                    assertThat(error.awsErrorDetails().errorCode())
-                            .isEqualTo("InvalidEgressOnlyInternetGatewayId.NotFound");
-                    assertThat(error.awsErrorDetails().errorMessage())
-                            .isEqualTo("The egress-only internet gateway ID "
-                                    + "'eigw-0123456789abcdef0' does not exist");
-                    assertThat(error.requestId()).isNotBlank();
-                });
+                        .build()).egressOnlyInternetGateways()).isEmpty();
     }
 
     @AfterAll
