@@ -39,6 +39,7 @@ class CodeArtifactServiceTest {
     private static final String ACCOUNT_ID = "123456789012";
 
     private CodeArtifactService service;
+    private RegionResolver regionResolver;
 
     @BeforeEach
     void setUp() {
@@ -47,7 +48,7 @@ class CodeArtifactServiceTest {
         AccountAwareStorageBackend<CodeArtifactPackageVersion> packageVersionStore =
                 AccountAwareStorageBackend.inMemory(ACCOUNT_ID);
 
-        RegionResolver regionResolver = mock(RegionResolver.class);
+        regionResolver = mock(RegionResolver.class);
         when(regionResolver.getAccountId()).thenReturn(ACCOUNT_ID);
         when(regionResolver.buildArn(anyString(), anyString(), anyString())).thenAnswer(invocation ->
                 "arn:aws:" + invocation.getArgument(0, String.class) + ":" + invocation.getArgument(1, String.class)
@@ -91,6 +92,59 @@ class CodeArtifactServiceTest {
         assertTrue(otherRegion.domain().getArn().contains(OTHER_REGION));
         assertEquals(1, service.listDomains(REGION, null, null).items().size());
         assertEquals(1, service.listDomains(OTHER_REGION, null, null).items().size());
+    }
+
+    @Test
+    void createDomainRejectsMoreThanTenDomainsPerAccount() {
+        for (int i = 0; i < 10; i++) {
+            service.createDomain(REGION, "dom-" + i, null, Map.of());
+        }
+        AwsException e = assertThrows(AwsException.class,
+                () -> service.createDomain(REGION, "dom-overflow", null, Map.of()));
+        assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals(402, e.getHttpStatus());
+        assertEquals("dom-overflow", e.getExtendedData().get("resourceId"));
+        assertEquals("domain", e.getExtendedData().get("resourceType"));
+    }
+
+    @Test
+    void createDomainAtCapStillReturnsConflictForDuplicateName() {
+        for (int i = 0; i < 10; i++) {
+            service.createDomain(REGION, "dom-" + i, null, Map.of());
+        }
+        AwsException e = assertThrows(AwsException.class,
+                () -> service.createDomain(REGION, "dom-0", null, Map.of()));
+        assertEquals("ConflictException", e.getErrorCode());
+    }
+
+    @Test
+    void deletingDomainFreesRoomForANewOne() {
+        for (int i = 0; i < 10; i++) {
+            service.createDomain(REGION, "dom-" + i, null, Map.of());
+        }
+        service.deleteDomain(REGION, "dom-0", null);
+        DomainView view = service.createDomain(REGION, "dom-new", null, Map.of());
+        assertEquals("dom-new", view.domain().getName());
+    }
+
+    @Test
+    void domainQuotaIsScopedPerRegion() {
+        for (int i = 0; i < 10; i++) {
+            service.createDomain(REGION, "dom-" + i, null, Map.of());
+        }
+        DomainView otherRegion = service.createDomain(OTHER_REGION, "dom-0", null, Map.of());
+        assertEquals("dom-0", otherRegion.domain().getName());
+    }
+
+    @Test
+    void domainQuotaIsScopedPerAccount() {
+        for (int i = 0; i < 10; i++) {
+            service.createDomain(REGION, "dom-" + i, null, Map.of());
+        }
+        String otherAccount = "999999999999";
+        when(regionResolver.getAccountId()).thenReturn(otherAccount);
+        DomainView view = service.createDomain(REGION, "dom-0", null, Map.of());
+        assertEquals(otherAccount, view.domain().getOwner());
     }
 
     @Test
@@ -208,6 +262,40 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class,
                 () -> service.createRepository(REGION, "dom", null, "consumer", null, upstreams, Map.of()));
         assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+    }
+
+    @Test
+    void createRepositoryRejectsMoreThanOneThousandRepositoriesPerDomain() {
+        service.createDomain(REGION, "dom", null, Map.of());
+        for (int i = 0; i < 1000; i++) {
+            service.createRepository(REGION, "dom", null, "repo-" + i, null, null, Map.of());
+        }
+        AwsException e = assertThrows(AwsException.class,
+                () -> service.createRepository(REGION, "dom", null, "overflow", null, null, Map.of()));
+        assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals(402, e.getHttpStatus());
+        assertEquals("overflow", e.getExtendedData().get("resourceId"));
+        assertEquals("repository", e.getExtendedData().get("resourceType"));
+
+        AwsException duplicate = assertThrows(AwsException.class,
+                () -> service.createRepository(REGION, "dom", null, "repo-0", null, null, Map.of()));
+        assertEquals("ConflictException", duplicate.getErrorCode());
+
+        service.deleteRepository(REGION, "dom", null, "repo-0");
+        CodeArtifactRepository freed = service.createRepository(REGION, "dom", null, "repo-new", null, null,
+                Map.of());
+        assertEquals("repo-new", freed.getName());
+    }
+
+    @Test
+    void repositoryQuotaIsScopedPerDomain() {
+        service.createDomain(REGION, "dom", null, Map.of());
+        for (int i = 0; i < 1000; i++) {
+            service.createRepository(REGION, "dom", null, "repo-" + i, null, null, Map.of());
+        }
+        service.createDomain(REGION, "dom-2", null, Map.of());
+        CodeArtifactRepository r = service.createRepository(REGION, "dom-2", null, "repo-0", null, null, Map.of());
+        assertEquals("repo-0", r.getName());
     }
 
     @Test

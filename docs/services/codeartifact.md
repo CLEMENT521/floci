@@ -15,14 +15,14 @@ proxy behind them yet.
 <!-- floci:actions:start -->
 | Action | Description |
 | --- | --- |
-| `CreateDomain` | Creates a domain, optionally with a KMS encryption key and initial tags. |
+| `CreateDomain` | Creates a domain (max 10 per account per Region), optionally with a KMS encryption key and initial tags. |
 | `DeleteDomain` | Deletes a domain; fails with `ConflictException` while it still contains repositories. |
 | `DescribeDomain` | Returns a domain's full description, including its repository count. |
 | `ListDomains` | Lists domain summaries for the account and Region, paginated. |
 | `PutDomainPermissionsPolicy` | Attaches or replaces a domain's resource policy, versioned by `policyRevision`. |
 | `GetDomainPermissionsPolicy` | Returns a domain's current resource policy and revision. |
 | `DeleteDomainPermissionsPolicy` | Removes a domain's resource policy, optionally checked against `policyRevision`. |
-| `CreateRepository` | Creates a repository with optional description, upstreams (max 10), and tags. |
+| `CreateRepository` | Creates a repository (max 1,000 per domain) with optional description, upstreams (max 10), and tags. |
 | `DeleteRepository` | Deletes a repository. |
 | `DescribeRepository` | Returns a repository's full description, including upstreams and external connections. |
 | `UpdateRepository` | Updates a repository's description and/or upstream list. |
@@ -45,7 +45,10 @@ proxy behind them yet.
 Domains and repositories are account and Region scoped and persisted through `StorageFactory`.
 `DeleteDomain` fails with `ConflictException` while the domain still contains repositories, matching
 AWS. `PutDomainPermissionsPolicy`/`PutRepositoryPermissionsPolicy` use the returned `policyRevision`
-for optimistic locking on subsequent updates, also matching AWS.
+for optimistic locking on subsequent updates, also matching AWS. Floci enforces AWS's own account
+and domain quotas: `CreateDomain` caps a single account at 10 domains per Region, and
+`CreateRepository` caps a single domain at 1,000 repositories, both returning
+`ServiceQuotaExceededException` with the offending `resourceId`/`resourceType` once reached.
 
 `AssociateExternalConnection` accepts the same fixed set of AWS-hosted public upstreams
 documented for real CodeArtifact (`public:npmjs`, `public:pypi`, `public:maven-central`, etc.) and

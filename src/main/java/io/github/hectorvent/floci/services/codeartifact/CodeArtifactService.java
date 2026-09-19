@@ -76,6 +76,8 @@ public class CodeArtifactService implements Resettable {
     private static final List<String> ASSET_HASH_ALGORITHMS = List.of("MD5", "SHA-1", "SHA-256", "SHA-512");
     private static final long MAX_ASSET_FILE_SIZE_BYTES = 5L * 1024 * 1024 * 1024;
     private static final int MAX_ASSETS_PER_PACKAGE_VERSION = 350;
+    private static final int MAX_DOMAINS_PER_ACCOUNT = 10;
+    private static final int MAX_REPOSITORIES_PER_DOMAIN = 1000;
     private static final String ASSET_STORAGE_DIR = "codeartifact-assets";
 
     public record DomainView(CodeArtifactDomain domain, int repositoryCount) {}
@@ -141,6 +143,11 @@ public class CodeArtifactService implements Resettable {
         String key = domainKey(region, domain);
         if (domains.getForAccount(owner, key).isPresent()) {
             throw conflict("Domain with name '" + domain + "' already exists.");
+        }
+        if (domainCountForAccount(owner, region) >= MAX_DOMAINS_PER_ACCOUNT) {
+            throw new AwsException("ServiceQuotaExceededException",
+                    "An AWS account can have a maximum of " + MAX_DOMAINS_PER_ACCOUNT + " domains.", 402,
+                    Map.of("resourceId", domain, "resourceType", "domain"));
         }
         CodeArtifactDomain d = new CodeArtifactDomain();
         d.setName(domain);
@@ -234,6 +241,11 @@ public class CodeArtifactService implements Resettable {
         String key = repositoryKey(region, domain, repository);
         if (repositories.getForAccount(owner, key).isPresent()) {
             throw conflict("Repository with name '" + repository + "' already exists in domain '" + domain + "'.");
+        }
+        if (repositoryCountForDomain(owner, region, domain) >= MAX_REPOSITORIES_PER_DOMAIN) {
+            throw new AwsException("ServiceQuotaExceededException",
+                    "A domain can have a maximum of " + MAX_REPOSITORIES_PER_DOMAIN + " repositories.", 402,
+                    Map.of("resourceId", repository, "resourceType", "repository"));
         }
         validateUpstreams(owner, region, domain, repository, upstreams);
         validateDescription(description);
@@ -620,6 +632,10 @@ public class CodeArtifactService implements Resettable {
 
     private int repositoryCountForDomain(String owner, String region, String domain) {
         return repositories.scanForAccount(owner, k -> k.startsWith(region + "::" + domain + "::")).size();
+    }
+
+    private int domainCountForAccount(String owner, String region) {
+        return domains.scanForAccount(owner, k -> k.startsWith(region + "::")).size();
     }
 
     private void validateUpstreams(String owner, String region, String domain, String repository,
