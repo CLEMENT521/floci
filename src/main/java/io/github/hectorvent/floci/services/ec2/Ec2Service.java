@@ -820,7 +820,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         acl.setDefault(false);
         acl.getEntries().add(naclEntry(32767, "-1", "deny", false, "0.0.0.0/0"));
         acl.getEntries().add(naclEntry(32767, "-1", "deny", true, "0.0.0.0/0"));
-        networkAcls.put(key(region, networkAclId), acl);
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, vpcId);
+            networkAcls.put(key(region, networkAclId), acl);
+        }
         return acl;
     }
 
@@ -3618,11 +3621,40 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
             requireNoTransitGatewayAttachment(region,
                     attachment -> vpcId.equals(attachment.getVpcId()),
                     "The vpc '" + vpcId + "' has dependencies and cannot be deleted.");
+            requireNoVpcDependents(region, vpcId);
             deleteVpcDefaultResources(region, vpcId);
             vpcs.delete(key(region, vpcId));
         }
         if (vpcNetworkManager != null) {
             vpcNetworkManager.deleteVpcNetwork(region, vpcId);
+        }
+    }
+
+    /**
+     * DeleteVpc only removes the resources AWS creates with the VPC (default security group, main
+     * route table, default network ACL). A subnet, or a security group, route table or network ACL the
+     * caller made, an internet gateway still attached, or a VPC endpoint must be removed first,
+     * otherwise AWS answers {@code DependencyViolation}.
+     */
+    private void requireNoVpcDependents(String region, String vpcId) {
+        boolean hasDependents = subnets.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(subnet -> vpcId.equals(subnet.getVpcId()))
+                || securityGroups.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(group -> vpcId.equals(group.getVpcId())
+                                && !"default".equals(group.getGroupName()))
+                || routeTables.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(table -> vpcId.equals(table.getVpcId())
+                                && table.getAssociations().stream().noneMatch(association -> association.isMain()))
+                || networkAcls.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(acl -> vpcId.equals(acl.getVpcId()) && !acl.isDefault())
+                || internetGateways.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(igw -> igw.getAttachments().stream()
+                                .anyMatch(attachment -> vpcId.equals(attachment.getVpcId())))
+                || vpcEndpoints.scan(k -> k.startsWith(region + "::")).stream()
+                        .anyMatch(endpoint -> vpcId.equals(endpoint.getVpcId()));
+        if (hasDependents) {
+            throw new AwsException("DependencyViolation",
+                    "The vpc '" + vpcId + "' has dependencies and cannot be deleted.", 400);
         }
     }
 
@@ -3801,7 +3833,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
             endpoint.setTags(new ArrayList<>(endpointTags));
             tags.put(endpoint.getVpcEndpointId(), new ArrayList<>(endpointTags));
         }
-        vpcEndpoints.put(key(region, endpoint.getVpcEndpointId()), endpoint);
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, vpcId);
+            vpcEndpoints.put(key(region, endpoint.getVpcEndpointId()), endpoint);
+        }
         return endpoint;
     }
 
@@ -4241,9 +4276,13 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         }
         // The conflict scan and the store must be one step under the VPC's lock, or two
         // overlapping creates in flight together both pass the scan before either is stored.
-        synchronized (lockFor(key(region, vpcId))) {
-            rejectConflictingSubnetCidr(region, vpcId, cidrBlock);
-            subnets.put(key(region, subnetId), subnet);
+        // The topology lock, outermost, keeps DeleteVpc from removing the VPC in between.
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, vpcId);
+            synchronized (lockFor(key(region, vpcId))) {
+                rejectConflictingSubnetCidr(region, vpcId, cidrBlock);
+                subnets.put(key(region, subnetId), subnet);
+            }
         }
         declareSubnetNetwork(region, vpcId, subnetId, cidrBlock);
 
@@ -4363,7 +4402,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         egressAll.setIpProtocol("-1");
         egressAll.getIpRanges().add(new IpRange("0.0.0.0/0"));
         sg.getIpPermissionsEgress().add(egressAll);
-        securityGroups.put(key(region, sgId), sg);
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, sg.getVpcId());
+            securityGroups.put(key(region, sgId), sg);
+        }
         // Persist the default egress rule as a SecurityGroupRule so that
         // DescribeSecurityGroupRules can find it immediately (#1093).
         createRules(region, sgId, egressAll, true);
@@ -6386,10 +6428,12 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
 
     public void attachInternetGateway(String region, String igwId, String vpcId) {
         ensureDefaultResources(region);
-        InternetGateway igw = getRequiredInternetGateway(region, igwId);
-
-        igw.getAttachments().add(new InternetGatewayAttachment(vpcId, "available"));
-        internetGateways.put(key(region, igwId), igw);
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, vpcId);
+            InternetGateway igw = getRequiredInternetGateway(region, igwId);
+            igw.getAttachments().add(new InternetGatewayAttachment(vpcId, "available"));
+            internetGateways.put(key(region, igwId), igw);
+        }
     }
 
     public void detachInternetGateway(String region, String igwId, String vpcId) {
@@ -6556,7 +6600,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         rt.setOwnerId(callerAccountId());
         rt.setRegion(region);
         rt.getRoutes().add(new Route(vpc.getCidrBlock(), "local", "CreateRouteTable"));
-        routeTables.put(key(region, rtId), rt);
+        synchronized (attachmentTopologyLock(region)) {
+            getRequiredVpc(region, vpcId);
+            routeTables.put(key(region, rtId), rt);
+        }
         return rt;
     }
 
