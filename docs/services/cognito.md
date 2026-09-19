@@ -197,12 +197,18 @@ further divergences, both deliberate:
 
 ## Supported AuthFlow Values
 
-`InitiateAuth` accepts `USER_PASSWORD_AUTH`, `USER_SRP_AUTH`, `CUSTOM_AUTH`, `REFRESH_TOKEN_AUTH` and
-`REFRESH_TOKEN`. `AdminInitiateAuth` accepts `ADMIN_USER_PASSWORD_AUTH`, `ADMIN_NO_SRP_AUTH`,
-`ADMIN_USER_SRP_AUTH`, `USER_PASSWORD_AUTH`, `CUSTOM_AUTH`, `REFRESH_TOKEN_AUTH` and `REFRESH_TOKEN`.
+`InitiateAuth` accepts `USER_PASSWORD_AUTH`, `USER_SRP_AUTH`, `CUSTOM_AUTH`, `USER_AUTH`,
+`REFRESH_TOKEN_AUTH` and `REFRESH_TOKEN`. `AdminInitiateAuth` accepts `ADMIN_USER_PASSWORD_AUTH`,
+`ADMIN_NO_SRP_AUTH`, `ADMIN_USER_SRP_AUTH`, `USER_PASSWORD_AUTH`, `CUSTOM_AUTH`, `USER_AUTH`,
+`REFRESH_TOKEN_AUTH` and `REFRESH_TOKEN`.
 
-Any other `AuthFlow` value, including the choice-based `USER_AUTH` flow, is rejected with
-`InvalidParameterException` and no tokens are issued. `USER_AUTH` is not implemented yet.
+`USER_AUTH` is the choice-based flow: with no `PREFERRED_CHALLENGE` it returns
+`ChallengeName=SELECT_CHALLENGE` and an `AvailableChallenges` list drawn from what the user has
+configured (`PASSWORD`, `PASSWORD_SRP`, `EMAIL_OTP`, `SMS_OTP`); with one, it goes straight to that
+challenge. It requires the user pool's tier to be Essentials or higher. `WEB_AUTHN` and the
+`ConfirmSignUp` session as a first-factor shortcut are not implemented yet.
+
+Any other `AuthFlow` value is rejected with `InvalidParameterException` and no tokens are issued.
 
 ## User Attribute Update Verification
 
