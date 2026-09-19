@@ -77,8 +77,8 @@ AWS::ECS::Cluster	EcsCfnProvisioner
 AWS::ECS::ClusterCapacityProviderAssociations	EcsCapacityCfnProvisioner
 AWS::ECS::Service	EcsCfnProvisioner
 AWS::ECS::TaskDefinition	EcsCfnProvisioner
-AWS::EKS::Cluster	LEGACY_SWITCH
-AWS::EKS::Nodegroup	LEGACY_SWITCH
+AWS::EKS::Cluster	EksCfnProvisioner
+AWS::EKS::Nodegroup	EksCfnProvisioner
 AWS::ElasticLoadBalancingV2::Listener	ElbV2CfnProvisioner
 AWS::ElasticLoadBalancingV2::ListenerRule	ElbV2CfnProvisioner
 AWS::ElasticLoadBalancingV2::LoadBalancer	ElbV2CfnProvisioner

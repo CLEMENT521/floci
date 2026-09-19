@@ -51,3 +51,7 @@ AWS::Redshift::Cluster	DeferMaintenanceIdentifier	Floci does not emulate deferre
 AWS::Route53::RecordSet	Id	schema gives no description; Ref returns the record name and the legacy spec gives the type no attributes
 AWS::SQS::QueuePolicy	Id	schema gives no description; the policy has no backing entity to take an id from
 AWS::SecretsManager::Secret	Id	Fn::GetAtt Id on a secret is its ARN, which the provisioner already sets as the physical id and as Arn; closable, deferred to a follow-up PR to keep this one a pure move
+AWS::EKS::Cluster	ClusterSecurityGroupId	not modeled: Floci does not create a cluster security group, so there is no id to publish
+AWS::EKS::Cluster	EncryptionConfigKeyArn	not modeled: Floci does not apply envelope encryption, so no KMS key arn is resolved
+AWS::EKS::Cluster	Id	not modeled: Floci identifies a cluster by its Name (the primary identifier and Ref), not a separate Id
+AWS::EKS::Nodegroup	Id	not published: Floci identifies a nodegroup by its name within the cluster, which is the Ref, not the composite Id

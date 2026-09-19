@@ -12,9 +12,6 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnDynami
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnResourceProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.UpdateCleanupResult;
 import io.github.hectorvent.floci.services.eventbridge.model.Target;
-import io.github.hectorvent.floci.services.eks.EksService;
-import io.github.hectorvent.floci.services.eks.model.CreateClusterRequest;
-import io.github.hectorvent.floci.services.eks.model.Nodegroup;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.IamRole;
 import io.github.hectorvent.floci.services.lambda.LambdaService;
@@ -93,7 +90,6 @@ public class CloudFormationResourceProvisioner {
     static final Set<String> DELETE_NEEDS_STACK_RESOURCE = Set.of(
             "AWS::ApiGatewayV2::Authorizer",
             "AWS::CloudFormation::CustomResource",
-            "AWS::EKS::Nodegroup",
             "AWS::IAM::ManagedPolicy",
             "AWS::IAM::Policy");
 
@@ -112,8 +108,6 @@ public class CloudFormationResourceProvisioner {
             "AWS::ApiGatewayV2::Route",
             "AWS::ApiGatewayV2::Stage",
             "AWS::CloudFormation::CustomResource",
-            "AWS::EKS::Cluster",
-            "AWS::EKS::Nodegroup",
             "AWS::IAM::AccessKey",
             "AWS::IAM::InstanceProfile",
             "AWS::IAM::ManagedPolicy",
@@ -139,7 +133,6 @@ public class CloudFormationResourceProvisioner {
     private final ObjectMapper objectMapper;
     private final CustomResourceResponseStore customResourceResponseStore;
     private final ContainerReachableEndpoint reachableEndpoint;
-    private final EksService eksService;
     // Item 15 decomposition: extracted per-service provisioners are consulted before the switch
     // below. As types migrate, their switch cases and provisionXxx methods are removed here; the
     // now-dead service deps above are cleared in the final cleanup once the switch is empty.
@@ -156,7 +149,6 @@ public class CloudFormationResourceProvisioner {
                                              ObjectMapper objectMapper,
                                              CustomResourceResponseStore customResourceResponseStore,
                                              ContainerReachableEndpoint reachableEndpoint,
-                                             EksService eksService,
                                              CloudFormationResourceRegistry resourceRegistry,
                                              CfnDynamicReferences dynamicReferences,
                                              EmulatorConfig config) {
@@ -169,7 +161,6 @@ public class CloudFormationResourceProvisioner {
         this.objectMapper = objectMapper;
         this.customResourceResponseStore = customResourceResponseStore;
         this.reachableEndpoint = reachableEndpoint;
-        this.eksService = eksService;
         this.resourceRegistry = resourceRegistry;
         this.dynamicReferences = dynamicReferences;
     }
@@ -239,8 +230,6 @@ public class CloudFormationResourceProvisioner {
                 case "AWS::ApiGatewayV2::Deployment" -> provisionApiGatewayV2Deployment(resource, properties, engine, region);
                 case "AWS::CloudFormation::CustomResource" ->
                         provisionCustomResource(resource, properties, engine, region, accountId, stackName);
-                case "AWS::EKS::Cluster" -> provisionEksCluster(resource, properties, engine, stackName);
-                case "AWS::EKS::Nodegroup" -> provisionEksNodegroup(resource, properties, engine, stackName);
                 default -> {
                     if (resourceType != null && resourceType.startsWith("Custom::")) {
                         provisionCustomResource(resource, properties, engine, region, accountId, stackName);
@@ -383,19 +372,6 @@ public class CloudFormationResourceProvisioner {
             deleteCustomResource(resource, region);
             return;
         }
-        // Nodegroup deletion needs both the cluster name (from a Fn::GetAtt attribute) and the
-        // nodegroup name (the physical id), which the type/physicalId delete path can't provide.
-        if ("AWS::EKS::Nodegroup".equals(resourceType)) {
-            String clusterName = resource.getAttributes().get("ClusterName");
-            if (clusterName != null && !clusterName.isBlank()) {
-                try {
-                    eksService.deleteNodeGroup(clusterName, resource.getPhysicalId());
-                } catch (Exception e) {
-                    LOG.debugv("Error deleting nodegroup {0}: {1}", resource.getPhysicalId(), e.getMessage());
-                }
-            }
-            return;
-        }
         // Authorizer deletion needs the api id (a stored attribute, not the physical id, which is
         // the authorizer id) — same shape as the Nodegroup case above. Without this, the generic
         // type/physicalId delete path has no case for this type at all and silently no-ops,
@@ -453,7 +429,6 @@ public class CloudFormationResourceProvisioner {
             // No bus context on the type/physicalId path (e.g. CREATE-rollback); targets the default bus.
             case "AWS::ApiGatewayV2::Api" -> apiGatewayV2Service.deleteApi(region, physicalId);
             case "AWS::Lambda::LayerVersion" -> deleteLambdaLayerVersion(physicalId, region);
-            case "AWS::EKS::Cluster" -> eksService.deleteCluster(physicalId);
             // Warn for the same reason the create path does: the delete reports success over a
             // type nothing here removes, and at debug that is invisible at the default log level.
             // The line names the physical id without claiming a resource survives it: this arm
@@ -522,50 +497,6 @@ public class CloudFormationResourceProvisioner {
     }
 
     // ── EKS ─────────────────────────────────────────────────────────────────────
-
-    private void provisionEksCluster(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                     String stackName) {
-        String name = resolveOptional(props, "Name", engine);
-        if (name == null || name.isBlank()) {
-            name = generatePhysicalName(stackName, r.getLogicalId(), 100, false);
-        }
-        CreateClusterRequest request = new CreateClusterRequest();
-        request.setName(name);
-        request.setVersion(resolveOptional(props, "Version", engine));
-        request.setRoleArn(resolveOptional(props, "RoleArn", engine));
-        var cluster = eksService.createCluster(request);
-        r.setPhysicalId(cluster.getName());
-        r.getAttributes().put("Arn", cluster.getArn());
-        if (cluster.getEndpoint() != null) {
-            r.getAttributes().put("Endpoint", cluster.getEndpoint());
-        }
-    }
-
-    private void provisionEksNodegroup(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                       String stackName) {
-        String clusterName = resolveOptional(props, "ClusterName", engine);
-        Nodegroup request = new Nodegroup();
-        String nodegroupName = resolveOptional(props, "NodegroupName", engine);
-        if (nodegroupName == null || nodegroupName.isBlank()) {
-            nodegroupName = generatePhysicalName(stackName, r.getLogicalId(), 100, false);
-        }
-        request.setNodegroupName(nodegroupName);
-        request.setNodeRole(resolveOptional(props, "NodeRole", engine));
-        List<String> subnets = new ArrayList<>();
-        if (props != null && props.has("Subnets") && props.get("Subnets").isArray()) {
-            for (JsonNode subnet : props.get("Subnets")) {
-                subnets.add(engine.resolve(subnet));
-            }
-        }
-        request.setSubnets(subnets);
-        var nodegroup = eksService.createNodeGroup(clusterName, request);
-        r.setPhysicalId(nodegroup.getNodegroupName());
-        r.getAttributes().put("ClusterName", nodegroup.getClusterName());
-        r.getAttributes().put("NodegroupName", nodegroup.getNodegroupName());
-        if (nodegroup.getNodegroupArn() != null) {
-            r.getAttributes().put("Arn", nodegroup.getNodegroupArn());
-        }
-    }
 
     // ── Lambda ────────────────────────────────────────────────────────────────
 
