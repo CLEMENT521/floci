@@ -55,3 +55,8 @@ AWS::EKS::Cluster	EncryptionConfigKeyArn	not modeled: Floci does not apply envel
 AWS::EKS::Cluster	Id	not modeled: Floci identifies a cluster by its Name (the primary identifier and Ref), not a separate Id
 AWS::EKS::Nodegroup	Id	not published: Floci identifies a nodegroup by its name within the cluster, which is the Ref, not the composite Id
 AWS::IAM::Policy	Id	not published: Floci uses the policy name for Ref, AWS returns an opaque generated identifier that Floci does not model
+AWS::IAM::ManagedPolicy	AttachmentCount	not published: the attachment count is dynamic and Floci does not expose it as a stable Fn::GetAtt value
+AWS::IAM::ManagedPolicy	CreateDate	not published: Floci does not surface the policy create date as an Fn::GetAtt value
+AWS::IAM::ManagedPolicy	IsAttachable	not modeled: Floci does not track policy attachability
+AWS::IAM::ManagedPolicy	PermissionsBoundaryUsageCount	not modeled: Floci does not track permissions-boundary usage
+AWS::IAM::ManagedPolicy	UpdateDate	not published: Floci does not surface the policy update date as an Fn::GetAtt value

@@ -89,7 +89,7 @@ AWS::Events::EventBusPolicy	EventsCfnProvisioner
 AWS::Events::Rule	EventsCfnProvisioner
 AWS::IAM::AccessKey	IamAccessKeyCfnProvisioner
 AWS::IAM::InstanceProfile	IamInstanceProfileCfnProvisioner
-AWS::IAM::ManagedPolicy	LEGACY_SWITCH
+AWS::IAM::ManagedPolicy	IamManagedPolicyCfnProvisioner
 AWS::IAM::Policy	IamPolicyCfnProvisioner
 AWS::IAM::Role	IamRoleCfnProvisioner
 AWS::IAM::User	IamUserCfnProvisioner

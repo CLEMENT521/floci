@@ -63,6 +63,7 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.ElbV2CfnP
 import io.github.hectorvent.floci.services.cloudformation.provisioners.FirehoseCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamAccessKeyCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamInstanceProfileCfnProvisioner;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.IamManagedPolicyCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamPolicyCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamRoleCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamUserCfnProvisioner;
@@ -299,6 +300,7 @@ final class CfnProvisionerFixture {
                 discovered.add(new IamAccessKeyCfnProvisioner(iamService));
                 discovered.add(new IamInstanceProfileCfnProvisioner(iamService));
                 discovered.add(new IamPolicyCfnProvisioner(iamService));
+                discovered.add(new IamManagedPolicyCfnProvisioner(iamService));
             }
             if (eksService != null) {
                 discovered.add(new EksCfnProvisioner(eksService));
