@@ -28,4 +28,8 @@ grep -q '/verifiedpermissions/' "$SHARD_FILE" && [ -n "$CEDAR_IMAGE" ] && pull "
 # services/cloudformation/, so it needs its own token alongside the /appsync/ path match.
 GRAPHQL_IMAGE="$(grep -oE 'graphql-image: *"[^"]+"' src/main/resources/application.yml | grep -oE '"[^"]+"' | tr -d '"')"
 grep -qE '/appsync/|AppSyncCfnIntegrationTest' "$SHARD_FILE" && [ -n "$GRAPHQL_IMAGE" ] && pull "$GRAPHQL_IMAGE"
+# RdsAwsIntegrationTest is the one class that starts SQL Server (about 1.5 GB); the pin lives in
+# application.yml. The other services/rds classes mock the container layer.
+SQLSERVER_IMAGE="$(grep -oE 'default-sql-server-image: *"[^"]+"' src/main/resources/application.yml | grep -oE '"[^"]+"' | tr -d '"')"
+grep -q 'RdsAwsIntegrationTest' "$SHARD_FILE" && [ -n "$SQLSERVER_IMAGE" ] && pull "$SQLSERVER_IMAGE"
 exit 0
