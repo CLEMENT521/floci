@@ -90,7 +90,7 @@ AWS::Events::Rule	EventsCfnProvisioner
 AWS::IAM::AccessKey	IamAccessKeyCfnProvisioner
 AWS::IAM::InstanceProfile	IamInstanceProfileCfnProvisioner
 AWS::IAM::ManagedPolicy	LEGACY_SWITCH
-AWS::IAM::Policy	LEGACY_SWITCH
+AWS::IAM::Policy	IamPolicyCfnProvisioner
 AWS::IAM::Role	IamRoleCfnProvisioner
 AWS::IAM::User	IamUserCfnProvisioner
 AWS::IoT::DomainConfiguration	IotDomainConfigurationCfnProvisioner

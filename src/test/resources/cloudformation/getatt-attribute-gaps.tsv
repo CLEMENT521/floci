@@ -54,3 +54,4 @@ AWS::EKS::Cluster	ClusterSecurityGroupId	not modeled: Floci does not create a cl
 AWS::EKS::Cluster	EncryptionConfigKeyArn	not modeled: Floci does not apply envelope encryption, so no KMS key arn is resolved
 AWS::EKS::Cluster	Id	not modeled: Floci identifies a cluster by its Name (the primary identifier and Ref), not a separate Id
 AWS::EKS::Nodegroup	Id	not published: Floci identifies a nodegroup by its name within the cluster, which is the Ref, not the composite Id
+AWS::IAM::Policy	Id	not published: Floci uses the policy name for Ref, AWS returns an opaque generated identifier that Floci does not model

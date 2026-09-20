@@ -114,6 +114,17 @@ public record ProvisionContext(CloudFormationTemplateEngine engine, String regio
     }
 
     /**
+     * The resolved {@code PolicyDocument} of an IAM policy resource as a JSON string, defaulting to
+     * an empty policy when the property is absent. Shared by the IAM policy provisioners so neither
+     * carries its own copy.
+     */
+    public String resolvePolicyDocument(JsonNode props) {
+        JsonNode documentNode = props != null ? props.get("PolicyDocument") : null;
+        String resolved = documentNode != null ? engine.resolveJsonAttributeStrict(documentNode) : null;
+        return resolved != null ? resolved : "{\"Version\":\"2012-10-17\",\"Statement\":[]}";
+    }
+
+    /**
      * The physical name for a resource whose name is create-only: the template's name when it gives
      * one, otherwise the name this resource already had, and only failing both a freshly generated
      * one.
