@@ -29,6 +29,7 @@ class CloudFormationIamLeafIntegrationTest {
     void createStackProvisionsAccessKeyAndInstanceProfile() throws InterruptedException {
         String suffix = Long.toString(System.nanoTime(), 36);
         String userName = "leaf-user-" + suffix;
+        String roleName = "leaf-role-" + suffix;
         String profileName = "leaf-profile-" + suffix;
         String stackName = "cfn-iam-leaf-" + suffix;
 
@@ -43,9 +44,19 @@ class CloudFormationIamLeafIntegrationTest {
                       "Type": "AWS::IAM::AccessKey",
                       "Properties": {"UserName": {"Ref": "User"}}
                     },
+                    "Role": {
+                      "Type": "AWS::IAM::Role",
+                      "Properties": {
+                        "RoleName": "%s",
+                        "AssumeRolePolicyDocument": {
+                          "Version": "2012-10-17",
+                          "Statement": [{"Effect": "Allow", "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]
+                        }
+                      }
+                    },
                     "Profile": {
                       "Type": "AWS::IAM::InstanceProfile",
-                      "Properties": {"InstanceProfileName": "%s"}
+                      "Properties": {"InstanceProfileName": "%s", "Roles": [{"Ref": "Role"}]}
                     }
                   },
                   "Outputs": {
@@ -54,7 +65,7 @@ class CloudFormationIamLeafIntegrationTest {
                     "ProfileArn": {"Value": {"Fn::GetAtt": ["Profile", "Arn"]}}
                   }
                 }
-                """.formatted(userName, profileName);
+                """.formatted(userName, roleName, profileName);
 
         String stackId = createStack(stackName, template);
         awaitStackStatus(stackId, "CREATE_COMPLETE");
