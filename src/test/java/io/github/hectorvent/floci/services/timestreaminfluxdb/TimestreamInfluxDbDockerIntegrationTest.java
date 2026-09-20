@@ -140,7 +140,7 @@ class TimestreamInfluxDbDockerIntegrationTest {
             if (status.endsWith("FAILED")) {
                 break;
             }
-            Thread.sleep(1000);
+            Thread.sleep(100);
         }
         fail(action + " " + id + " ended in status " + status + " instead of " + expectedStatus);
     }
