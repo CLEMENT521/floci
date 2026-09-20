@@ -9,6 +9,7 @@ import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.iam.model.AccessKey;
 import io.github.hectorvent.floci.services.iam.model.IamUser;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -200,6 +202,30 @@ class IamUserCfnProvisionerTest {
         verify(iam).deleteUserPolicy("my-user", "inline-1");
         verify(iam).removeUserFromGroup("dev-group", "my-user");
         verify(iam).deleteAccessKey("my-user", "AKIA123");
+        verify(iam).deleteUser("my-user");
+    }
+
+    @Test
+    void deleteRemovesLoginProfileBeforeDeletingUser() {
+        IamUser user = new IamUser("AIDAuser", "my-user", "/", "arn:aws:iam::" + ACCOUNT_ID + ":user/my-user");
+        when(iam.getUser("my-user")).thenReturn(user);
+
+        provisioner.delete("AWS::IAM::User", "my-user", "us-east-1");
+
+        InOrder order = inOrder(iam);
+        order.verify(iam).deleteLoginProfile("my-user");
+        order.verify(iam).deleteUser("my-user");
+    }
+
+    @Test
+    void deleteToleratesUserWithoutLoginProfile() {
+        IamUser user = new IamUser("AIDAuser", "my-user", "/", "arn:aws:iam::" + ACCOUNT_ID + ":user/my-user");
+        when(iam.getUser("my-user")).thenReturn(user);
+        doThrow(new AwsException("NoSuchEntity", "Login Profile for User my-user cannot be found.", 404))
+                .when(iam).deleteLoginProfile("my-user");
+
+        provisioner.delete("AWS::IAM::User", "my-user", "us-east-1");
+
         verify(iam).deleteUser("my-user");
     }
 

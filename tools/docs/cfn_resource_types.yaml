@@ -160,6 +160,7 @@ notes:
   AWS::Redshift::ClusterSecurityGroup: accepted; no EC2-Classic security group model
   AWS::Redshift::Cluster: single-node container; Port and non-dev DBName ignored; ManageMasterPassword unsupported
   AWS::CDK::Metadata: accepted; no-op
+  AWS::IAM::User: 'template `LoginProfile` and `PermissionsBoundary` are ignored; an API-created login profile is removed on delete'
   AWS::IoT::DomainConfiguration: '`ServerCertificates` resolves to a JSON string'
   AWS::IoT::Policy: 'deleted after detaching it from its principals; on AWS the delete fails with `DeleteConflictException` while the policy is attached'
   Custom::DynamoDBReplica: applied natively against DynamoDB, not via a provider Lambda

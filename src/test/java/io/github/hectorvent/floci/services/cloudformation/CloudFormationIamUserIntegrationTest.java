@@ -95,6 +95,54 @@ class CloudFormationIamUserIntegrationTest {
     }
 
     @Test
+    void deleteStackDeletesUserWithLoginProfileCreatedOutOfBand() throws InterruptedException {
+        String suffix = Long.toString(System.nanoTime(), 36);
+        String userName = "probe-profile-user-" + suffix;
+        String stackName = "cfn-profile-stack-" + suffix;
+
+        String template = """
+                {
+                  "Resources": {
+                    "ProfileUser": {
+                      "Type": "AWS::IAM::User",
+                      "Properties": {
+                        "UserName": "%s"
+                      }
+                    }
+                  }
+                }
+                """.formatted(userName);
+
+        String stackId = createStack(stackName, template);
+        awaitStackStatus(stackId, "CREATE_COMPLETE");
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .header("Authorization", IAM_AUTH)
+            .formParam("Action", "CreateLoginProfile")
+            .formParam("UserName", userName)
+            .formParam("Password", "Sup3r$ecret!")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        deleteStack(stackName);
+        awaitStackStatus(stackId, "DELETE_COMPLETE");
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .header("Authorization", IAM_AUTH)
+            .formParam("Action", "GetUser")
+            .formParam("UserName", userName)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(404)
+            .body(containsString("NoSuchEntity"));
+    }
+
+    @Test
     void deleteStackDeletesUserWithGeneratedName() throws InterruptedException {
         String suffix = Long.toString(System.nanoTime(), 36);
         String stackName = "cfn-genuser-stack-" + suffix;
