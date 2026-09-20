@@ -210,6 +210,12 @@ challenge. It requires the user pool's tier to be Essentials or higher. `WEB_AUT
 
 Any other `AuthFlow` value is rejected with `InvalidParameterException` and no tokens are issued.
 
+When an app client sets `ExplicitAuthFlows`, only the flows it lists are accepted (`ALLOW_USER_PASSWORD_AUTH`,
+`ALLOW_USER_SRP_AUTH`, `ALLOW_CUSTOM_AUTH`, `ALLOW_USER_AUTH`, `ALLOW_ADMIN_USER_PASSWORD_AUTH`,
+`ALLOW_REFRESH_TOKEN_AUTH`, and the legacy `USER_PASSWORD_AUTH`, `ADMIN_NO_SRP_AUTH` and
+`CUSTOM_AUTH_FLOW_ONLY`); any other flow fails with `InvalidParameterException`. A client created without `ExplicitAuthFlows` is not gated, unlike AWS, which defaults
+such a client to SRP, custom and refresh auth.
+
 ## User Attribute Update Verification
 
 `CreateUserPool`, `UpdateUserPool`, and `DescribeUserPool` support

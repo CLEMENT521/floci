@@ -204,6 +204,119 @@ class CognitoServiceTest {
         assertEquals("USERNAME and SRP_A are required", exception.getMessage());
     }
 
+    @Test
+    void initiateAuthRejectsFlowsTheClientDoesNotAllow() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_SRP_AUTH", "ALLOW_REFRESH_TOKEN_AUTH");
+        Map<String, String> passwordParams = Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!");
+
+        AwsException exception = assertThrows(AwsException.class, () ->
+                service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH", passwordParams));
+        assertEquals("InvalidParameterException", exception.getErrorCode());
+        assertEquals("USER_PASSWORD_AUTH flow not enabled for this client", exception.getMessage());
+
+        assertThrows(AwsException.class, () ->
+                service.initiateAuth(client.getClientId(), "CUSTOM_AUTH", Map.of("USERNAME", "alice")));
+    }
+
+    @Test
+    void initiateAuthAllowsFlowsTheClientEnables() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_PASSWORD_AUTH");
+
+        Map<String, Object> result = service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!"));
+
+        assertTrue(result.containsKey("AuthenticationResult"));
+    }
+
+    @Test
+    void initiateAuthHonorsLegacyExplicitAuthFlowValues() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "USER_PASSWORD_AUTH");
+
+        Map<String, Object> result = service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!"));
+
+        assertTrue(result.containsKey("AuthenticationResult"));
+    }
+
+    @Test
+    void refreshTokenAuthRequiresAllowRefreshTokenAuthWhenClientUsesAllowValues() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_PASSWORD_AUTH");
+
+        AwsException exception = assertThrows(AwsException.class, () ->
+                service.initiateAuth(client.getClientId(), "REFRESH_TOKEN_AUTH",
+                        Map.of("REFRESH_TOKEN", "irrelevant")));
+
+        assertEquals("REFRESH_TOKEN_AUTH flow not enabled for this client", exception.getMessage());
+    }
+
+    @Test
+    void adminInitiateAuthRejectsFlowsTheClientDoesNotAllow() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_SRP_AUTH");
+        Map<String, String> passwordParams = Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!");
+
+        for (String flow : List.of("ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH", "USER_PASSWORD_AUTH")) {
+            AwsException exception = assertThrows(AwsException.class, () ->
+                    service.adminInitiateAuth(pool.getId(), client.getClientId(), flow, passwordParams));
+            assertEquals("InvalidParameterException", exception.getErrorCode());
+            assertEquals(flow + " flow not enabled for this client", exception.getMessage());
+        }
+    }
+
+    @Test
+    void adminInitiateAuthAllowsAdminPasswordFlowWhenEnabled() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_ADMIN_USER_PASSWORD_AUTH");
+        Map<String, String> passwordParams = Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!");
+
+        for (String flow : List.of("ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH")) {
+            Map<String, Object> result = service.adminInitiateAuth(pool.getId(), client.getClientId(), flow,
+                    passwordParams);
+            assertTrue(result.containsKey("AuthenticationResult"));
+        }
+    }
+
+    @Test
+    void userAuthRequiresAllowUserAuthWhenClientListsFlows() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_PASSWORD_AUTH", "ALLOW_USER_SRP_AUTH");
+        Map<String, String> params = Map.of("USERNAME", "alice");
+
+        AwsException initiate = assertThrows(AwsException.class, () ->
+                service.initiateAuth(client.getClientId(), "USER_AUTH", params));
+        assertEquals("InvalidParameterException", initiate.getErrorCode());
+        assertEquals("USER_AUTH flow not enabled for this client", initiate.getMessage());
+
+        AwsException admin = assertThrows(AwsException.class, () ->
+                service.adminInitiateAuth(pool.getId(), client.getClientId(), "USER_AUTH", params));
+        assertEquals("InvalidParameterException", admin.getErrorCode());
+        assertEquals("USER_AUTH flow not enabled for this client", admin.getMessage());
+    }
+
+    @Test
+    void userAuthAllowedWhenClientEnablesAllowUserAuth() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = clientWithFlows(pool, "ALLOW_USER_AUTH");
+        Map<String, String> params = Map.of("USERNAME", "alice");
+
+        Map<String, Object> initiate = service.initiateAuth(client.getClientId(), "USER_AUTH", params);
+        assertEquals("SELECT_CHALLENGE", initiate.get("ChallengeName"));
+
+        Map<String, Object> admin = service.adminInitiateAuth(pool.getId(), client.getClientId(), "USER_AUTH",
+                params);
+        assertEquals("SELECT_CHALLENGE", admin.get("ChallengeName"));
+    }
+
+    private UserPoolClient clientWithFlows(UserPool pool, String... explicitAuthFlows) {
+        return service.createUserPoolClient(pool.getId(), "flows-client", false, false, List.of(), List.of(),
+                null, List.of(), null, List.of(explicitAuthFlows), null, null, List.of(), null, List.of(), null,
+                null, null, List.of(), null, null);
+    }
+
     @ParameterizedTest
     @CsvSource({
             "Short1!a",

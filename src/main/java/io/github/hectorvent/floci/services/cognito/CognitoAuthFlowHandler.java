@@ -95,11 +95,26 @@ final class CognitoAuthFlowHandler {
         UserPool pool = service.describeUserPool(client.getUserPoolId());
 
         return switch (authFlow) {
-            case "USER_PASSWORD_AUTH" -> authenticateWithPassword(pool, client, authParameters, clientMetadata);
-            case "REFRESH_TOKEN_AUTH", "REFRESH_TOKEN" -> handleRefreshToken(pool, client, authParameters, clientMetadata);
-            case "USER_SRP_AUTH" -> handleUserSrpAuth(pool, client, authParameters, clientMetadata);
-            case "CUSTOM_AUTH" -> handleCustomAuth(pool, client, authParameters, clientMetadata);
-            case "USER_AUTH" -> handleUserAuth(pool, client, authParameters, clientMetadata);
+            case "USER_PASSWORD_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_PASSWORD_AUTH", "USER_PASSWORD_AUTH");
+                yield authenticateWithPassword(pool, client, authParameters, clientMetadata);
+            }
+            case "REFRESH_TOKEN_AUTH", "REFRESH_TOKEN" -> {
+                requireRefreshEnabled(client, authFlow);
+                yield handleRefreshToken(pool, client, authParameters, clientMetadata);
+            }
+            case "USER_SRP_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_SRP_AUTH");
+                yield handleUserSrpAuth(pool, client, authParameters, clientMetadata);
+            }
+            case "CUSTOM_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_CUSTOM_AUTH", "CUSTOM_AUTH_FLOW_ONLY");
+                yield handleCustomAuth(pool, client, authParameters, clientMetadata);
+            }
+            case "USER_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_AUTH");
+                yield handleUserAuth(pool, client, authParameters, clientMetadata);
+            }
             default -> throw unsupportedAuthFlow(authFlow);
         };
     }
@@ -123,14 +138,67 @@ final class CognitoAuthFlowHandler {
         }
 
         return switch (authFlow) {
-            case "ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH", "USER_PASSWORD_AUTH" ->
-                    authenticateWithPassword(pool, client, authParameters, clientMetadata);
-            case "REFRESH_TOKEN_AUTH", "REFRESH_TOKEN" -> handleRefreshToken(pool, client, authParameters, clientMetadata);
-            case "ADMIN_USER_SRP_AUTH", "USER_SRP_AUTH" -> handleUserSrpAuth(pool, client, authParameters, clientMetadata);
-            case "CUSTOM_AUTH" -> handleCustomAuth(pool, client, authParameters, clientMetadata);
-            case "USER_AUTH" -> handleUserAuth(pool, client, authParameters, clientMetadata);
+            case "ADMIN_USER_PASSWORD_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH");
+                yield authenticateWithPassword(pool, client, authParameters, clientMetadata);
+            }
+            case "ADMIN_NO_SRP_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH");
+                yield authenticateWithPassword(pool, client, authParameters, clientMetadata);
+            }
+            case "USER_PASSWORD_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_PASSWORD_AUTH", "USER_PASSWORD_AUTH",
+                        "ALLOW_ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH");
+                yield authenticateWithPassword(pool, client, authParameters, clientMetadata);
+            }
+            case "REFRESH_TOKEN_AUTH", "REFRESH_TOKEN" -> {
+                requireRefreshEnabled(client, authFlow);
+                yield handleRefreshToken(pool, client, authParameters, clientMetadata);
+            }
+            case "ADMIN_USER_SRP_AUTH", "USER_SRP_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_SRP_AUTH");
+                yield handleUserSrpAuth(pool, client, authParameters, clientMetadata);
+            }
+            case "CUSTOM_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_CUSTOM_AUTH", "CUSTOM_AUTH_FLOW_ONLY");
+                yield handleCustomAuth(pool, client, authParameters, clientMetadata);
+            }
+            case "USER_AUTH" -> {
+                requireFlowEnabled(client, authFlow, "ALLOW_USER_AUTH");
+                yield handleUserAuth(pool, client, authParameters, clientMetadata);
+            }
             default -> throw unsupportedAuthFlow(authFlow);
         };
+    }
+
+    /**
+     * Enforces the app client's {@code ExplicitAuthFlows}. A client with no explicit list is left
+     * ungated so clients created without one keep working; once a list is set, the flow must be
+     * covered by one of {@code acceptedValues}.
+     */
+    private static void requireFlowEnabled(UserPoolClient client, String authFlow, String... acceptedValues) {
+        List<String> enabled = client.getExplicitAuthFlows();
+        if (enabled == null || enabled.isEmpty()) {
+            return;
+        }
+        for (String accepted : acceptedValues) {
+            if (enabled.contains(accepted)) {
+                return;
+            }
+        }
+        throw new AwsException("InvalidParameterException", authFlow + " flow not enabled for this client", 400);
+    }
+
+    /**
+     * Refresh has to be listed explicitly via {@code ALLOW_REFRESH_TOKEN_AUTH}, except on clients that
+     * only use legacy (non {@code ALLOW_}) values, where refresh was never gated.
+     */
+    private static void requireRefreshEnabled(UserPoolClient client, String authFlow) {
+        List<String> enabled = client.getExplicitAuthFlows();
+        if (enabled == null || enabled.stream().noneMatch(flow -> flow.startsWith("ALLOW_"))) {
+            return;
+        }
+        requireFlowEnabled(client, authFlow, "ALLOW_REFRESH_TOKEN_AUTH");
     }
 
     private static AwsException unsupportedAuthFlow(String authFlow) {
