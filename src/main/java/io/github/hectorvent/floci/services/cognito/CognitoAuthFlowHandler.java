@@ -126,7 +126,7 @@ final class CognitoAuthFlowHandler {
             case "ADMIN_USER_PASSWORD_AUTH", "ADMIN_NO_SRP_AUTH", "USER_PASSWORD_AUTH" ->
                     authenticateWithPassword(pool, client, authParameters, clientMetadata);
             case "REFRESH_TOKEN_AUTH", "REFRESH_TOKEN" -> handleRefreshToken(pool, client, authParameters, clientMetadata);
-            case "ADMIN_USER_SRP_AUTH" -> handleUserSrpAuth(pool, client, authParameters, clientMetadata);
+            case "ADMIN_USER_SRP_AUTH", "USER_SRP_AUTH" -> handleUserSrpAuth(pool, client, authParameters, clientMetadata);
             case "CUSTOM_AUTH" -> handleCustomAuth(pool, client, authParameters, clientMetadata);
             case "USER_AUTH" -> handleUserAuth(pool, client, authParameters, clientMetadata);
             default -> throw unsupportedAuthFlow(authFlow);

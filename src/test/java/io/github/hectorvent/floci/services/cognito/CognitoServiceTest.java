@@ -191,6 +191,19 @@ class CognitoServiceTest {
         assertTrue(result.containsKey("AuthenticationResult"));
     }
 
+    @Test
+    void adminInitiateAuthAcceptsTheSdkSpellingOfSrpAuth() {
+        UserPool pool = createPoolAndUser();
+        UserPoolClient client = service.createUserPoolClient(
+                pool.getId(), "client", false, false, List.of(), List.of());
+
+        AwsException exception = assertThrows(AwsException.class, () ->
+                service.adminInitiateAuth(pool.getId(), client.getClientId(), "USER_SRP_AUTH",
+                        Map.of("USERNAME", "alice")));
+
+        assertEquals("USERNAME and SRP_A are required", exception.getMessage());
+    }
+
     @ParameterizedTest
     @CsvSource({
             "Short1!a",
