@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -76,6 +77,8 @@ class CodeArtifactServiceTest {
         service.createDomain(REGION, "dup", null, Map.of());
         AwsException e = assertThrows(AwsException.class, () -> service.createDomain(REGION, "dup", null, Map.of()));
         assertEquals("ConflictException", e.getErrorCode());
+        assertEquals("dup", e.getExtendedData().get("resourceId"));
+        assertEquals("domain", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -204,13 +207,47 @@ class CodeArtifactServiceTest {
         assertEquals(attempts - 1, conflicts.get());
     }
 
+    @Test
+    void requiredDomainFieldRejectsNullInsteadOfCrashing() {
+        AwsException describe = assertThrows(AwsException.class, () -> service.describeDomain(REGION, null, null));
+        assertEquals("ValidationException", describe.getErrorCode());
+
+        AwsException delete = assertThrows(AwsException.class, () -> service.deleteDomain(REGION, null, null));
+        assertEquals("ValidationException", delete.getErrorCode());
+
+        AwsException getPolicy = assertThrows(AwsException.class,
+                () -> service.getDomainPermissionsPolicy(REGION, null, null));
+        assertEquals("ValidationException", getPolicy.getErrorCode());
+    }
+
     // ---------------------------------------------------------- repositories
+
+    @Test
+    void requiredRepositoryFieldsRejectNullInsteadOfCrashing() {
+        service.createDomain(REGION, "dom", null, Map.of());
+
+        AwsException missingDomain = assertThrows(AwsException.class,
+                () -> service.describeRepository(REGION, null, null, "repo"));
+        assertEquals("ValidationException", missingDomain.getErrorCode());
+        assertEquals("domain is required.", missingDomain.getMessage());
+
+        AwsException missingRepository = assertThrows(AwsException.class,
+                () -> service.describeRepository(REGION, "dom", null, null));
+        assertEquals("ValidationException", missingRepository.getErrorCode());
+        assertEquals("repository is required.", missingRepository.getMessage());
+
+        AwsException missingRepositoryEndpoint = assertThrows(AwsException.class,
+                () -> service.getRepositoryEndpoint(REGION, null, null, "repo", "npm", null));
+        assertEquals("ValidationException", missingRepositoryEndpoint.getErrorCode());
+    }
 
     @Test
     void createRepositoryRequiresExistingDomain() {
         AwsException e = assertThrows(AwsException.class,
                 () -> service.createRepository(REGION, "missing-domain", null, "repo", null, null, Map.of()));
         assertEquals("ResourceNotFoundException", e.getErrorCode());
+        assertEquals("missing-domain", e.getExtendedData().get("resourceId"));
+        assertEquals("domain", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -219,6 +256,8 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class,
                 () -> service.createRepository(REGION, "dom", null, "repo", null, List.of("ghost"), Map.of()));
         assertEquals("ResourceNotFoundException", e.getErrorCode());
+        assertEquals("ghost", e.getExtendedData().get("resourceId"));
+        assertEquals("repository", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -262,6 +301,8 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class,
                 () -> service.createRepository(REGION, "dom", null, "consumer", null, upstreams, Map.of()));
         assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals("consumer", e.getExtendedData().get("resourceId"));
+        assertEquals("repository", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -373,6 +414,8 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class,
                 () -> service.associateExternalConnection(REGION, "dom", null, "repo", "public:pypi"));
         assertEquals("ConflictException", e.getErrorCode());
+        assertEquals("repo", e.getExtendedData().get("resourceId"));
+        assertEquals("repository", e.getExtendedData().get("resourceType"));
 
         CodeArtifactRepository disassociated = service.disassociateExternalConnection(REGION, "dom", null, "repo",
                 "public:npmjs");
@@ -426,6 +469,35 @@ class CodeArtifactServiceTest {
                 () -> service.tagResource("arn:aws:codeartifact:" + REGION + ":" + ACCOUNT_ID + ":domain/ghost",
                         Map.of("k", "v")));
         assertEquals("ResourceNotFoundException", e.getErrorCode());
+        assertEquals("ghost", e.getExtendedData().get("resourceId"));
+        assertEquals("domain", e.getExtendedData().get("resourceType"));
+    }
+
+    @Test
+    void createDomainRejectsMoreThanTwoHundredTags() {
+        Map<String, String> tags = new HashMap<>();
+        for (int i = 0; i < 201; i++) {
+            tags.put("key-" + i, "value-" + i);
+        }
+        AwsException e = assertThrows(AwsException.class,
+                () -> service.createDomain(REGION, "dom", null, tags));
+        assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals("dom", e.getExtendedData().get("resourceId"));
+        assertEquals("domain", e.getExtendedData().get("resourceType"));
+    }
+
+    @Test
+    void tagResourceRejectsMoreThanTwoHundredTagsOnRepository() {
+        service.createDomain(REGION, "dom", null, Map.of());
+        CodeArtifactRepository repo = service.createRepository(REGION, "dom", null, "repo", null, null, Map.of());
+        Map<String, String> tags = new HashMap<>();
+        for (int i = 0; i < 201; i++) {
+            tags.put("key-" + i, "value-" + i);
+        }
+        AwsException e = assertThrows(AwsException.class, () -> service.tagResource(repo.getArn(), tags));
+        assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals("repo", e.getExtendedData().get("resourceId"));
+        assertEquals("repository", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -537,6 +609,30 @@ class CodeArtifactServiceTest {
     }
 
     @Test
+    void requiredPackageVersionFieldsRejectNullInsteadOfCrashing() {
+        service.createDomain(REGION, "dom", null, Map.of());
+        service.createRepository(REGION, "dom", null, "repo", null, null, Map.of());
+        byte[] content = "x".getBytes(StandardCharsets.UTF_8);
+
+        AwsException publishMissingDomain = assertThrows(AwsException.class, () -> service.publishPackageVersion(
+                REGION, null, null, "repo", "generic", null, "my-pkg", "1.0.0", "asset.txt", sha256Hex(content),
+                "false", content));
+        assertEquals("ValidationException", publishMissingDomain.getErrorCode());
+        assertEquals("domain is required.", publishMissingDomain.getMessage());
+
+        AwsException describeMissingRepository = assertThrows(AwsException.class,
+                () -> service.describePackageVersion(REGION, "dom", null, null, "generic", null, "my-pkg", "1.0.0"));
+        assertEquals("ValidationException", describeMissingRepository.getErrorCode());
+        assertEquals("repository is required.", describeMissingRepository.getMessage());
+
+        AwsException getAssetMissingVersion = assertThrows(AwsException.class,
+                () -> service.getPackageVersionAsset(REGION, "dom", null, "repo", "generic", null, "my-pkg", null,
+                        "asset.txt", null));
+        assertEquals("ValidationException", getAssetMissingVersion.getErrorCode());
+        assertEquals("packageVersion is required.", getAssetMissingVersion.getMessage());
+    }
+
+    @Test
     void unfinishedPublishAllowsMultipleAssetsThenFinalizes() {
         service.createDomain(REGION, "dom", null, Map.of());
         service.createRepository(REGION, "dom", null, "repo", null, null, Map.of());
@@ -566,6 +662,8 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class, () -> service.publishPackageVersion(REGION, "dom", null,
                 "repo", "generic", null, "my-pkg", "1.0.0", "b.txt", sha256Hex(content), "false", content));
         assertEquals("ConflictException", e.getErrorCode());
+        assertEquals("1.0.0", e.getExtendedData().get("resourceId"));
+        assertEquals("package-version", e.getExtendedData().get("resourceType"));
     }
 
     @Test
@@ -581,6 +679,8 @@ class CodeArtifactServiceTest {
         AwsException e = assertThrows(AwsException.class, () -> service.publishPackageVersion(REGION, "dom", null,
                 "repo", "generic", null, "my-pkg", "1.0.0", "asset-350.txt", sha256Hex(oneMore), "true", oneMore));
         assertEquals("ServiceQuotaExceededException", e.getErrorCode());
+        assertEquals("1.0.0", e.getExtendedData().get("resourceId"));
+        assertEquals("package-version", e.getExtendedData().get("resourceType"));
 
         // Re-publishing an asset name already on the version must not itself trip the cap.
         byte[] resend = "content-0".getBytes(StandardCharsets.UTF_8);
@@ -623,10 +723,14 @@ class CodeArtifactServiceTest {
         AwsException wrongAsset = assertThrows(AwsException.class, () -> service.getPackageVersionAsset(REGION,
                 "dom", null, "repo", "generic", null, "my-pkg", "1.0.0", "missing.txt", null));
         assertEquals("ResourceNotFoundException", wrongAsset.getErrorCode());
+        assertEquals("missing.txt", wrongAsset.getExtendedData().get("resourceId"));
+        assertEquals("asset", wrongAsset.getExtendedData().get("resourceType"));
 
         AwsException wrongRevision = assertThrows(AwsException.class, () -> service.getPackageVersionAsset(REGION,
                 "dom", null, "repo", "generic", null, "my-pkg", "1.0.0", "a.txt", "not-the-current-revision"));
         assertEquals("ResourceNotFoundException", wrongRevision.getErrorCode());
+        assertEquals("1.0.0", wrongRevision.getExtendedData().get("resourceId"));
+        assertEquals("package-version", wrongRevision.getExtendedData().get("resourceType"));
     }
 
     @Test

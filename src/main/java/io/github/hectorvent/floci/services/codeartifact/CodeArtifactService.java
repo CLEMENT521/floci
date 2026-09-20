@@ -142,12 +142,12 @@ public class CodeArtifactService implements Resettable {
         String owner = regionResolver.getAccountId();
         String key = domainKey(region, domain);
         if (domains.getForAccount(owner, key).isPresent()) {
-            throw conflict("Domain with name '" + domain + "' already exists.");
+            throw conflict("Domain with name '" + domain + "' already exists.", domain, "domain");
         }
         if (domainCountForAccount(owner, region) >= MAX_DOMAINS_PER_ACCOUNT) {
             throw new AwsException("ServiceQuotaExceededException",
                     "An AWS account can have a maximum of " + MAX_DOMAINS_PER_ACCOUNT + " domains.", 402,
-                    Map.of("resourceId", domain, "resourceType", "domain"));
+                    resourceFields(domain, "domain"));
         }
         CodeArtifactDomain d = new CodeArtifactDomain();
         d.setName(domain);
@@ -157,7 +157,7 @@ public class CodeArtifactService implements Resettable {
         d.setEncryptionKey(encryptionKey != null ? encryptionKey
                 : regionResolver.buildArn("kms", region, "alias/aws/codeartifact"));
         d.setCreatedTime(Instant.now().getEpochSecond());
-        d.setTags(validateTags(tags, Map.of()));
+        d.setTags(validateTags(tags, Map.of(), domain, "domain"));
         domains.putForAccount(owner, key, d);
         return new DomainView(d, 0);
     }
@@ -165,11 +165,11 @@ public class CodeArtifactService implements Resettable {
     public synchronized DomainView deleteDomain(String region, String domain, String domainOwner) {
         String owner = effectiveOwner(domainOwner);
         String key = domainKey(region, domain);
-        CodeArtifactDomain d = requireDomain(owner, key);
+        CodeArtifactDomain d = requireDomain(owner, key, domain);
         int repoCount = repositoryCountForDomain(owner, region, domain);
         if (repoCount > 0) {
             throw conflict("Domain '" + domain + "' contains repositories and cannot be deleted "
-                    + "until they are deleted.");
+                    + "until they are deleted.", domain, "domain");
         }
         domains.deleteForAccount(owner, key);
         return new DomainView(d, 0);
@@ -177,7 +177,7 @@ public class CodeArtifactService implements Resettable {
 
     public DomainView describeDomain(String region, String domain, String domainOwner) {
         String owner = effectiveOwner(domainOwner);
-        CodeArtifactDomain d = requireDomain(owner, domainKey(region, domain));
+        CodeArtifactDomain d = requireDomain(owner, domainKey(region, domain), domain);
         return new DomainView(d, repositoryCountForDomain(owner, region, domain));
     }
 
@@ -196,8 +196,8 @@ public class CodeArtifactService implements Resettable {
                                                                    String policyDocument, String policyRevision) {
         String owner = effectiveOwner(domainOwner);
         String key = domainKey(region, domain);
-        CodeArtifactDomain d = requireDomain(owner, key);
-        checkRevision(d.getPolicyRevision(), policyRevision);
+        CodeArtifactDomain d = requireDomain(owner, key, domain);
+        checkRevision(d.getPolicyRevision(), policyRevision, domain, "domain");
         validatePolicyDocument(policyDocument);
         d.setPolicyDocument(policyDocument);
         d.setPolicyRevision(newRevision());
@@ -207,9 +207,9 @@ public class CodeArtifactService implements Resettable {
 
     public ResourcePolicy getDomainPermissionsPolicy(String region, String domain, String domainOwner) {
         String owner = effectiveOwner(domainOwner);
-        CodeArtifactDomain d = requireDomain(owner, domainKey(region, domain));
+        CodeArtifactDomain d = requireDomain(owner, domainKey(region, domain), domain);
         if (d.getPolicyDocument() == null) {
-            throw notFound("No resource policy is associated with domain '" + domain + "'.");
+            throw notFound("No resource policy is associated with domain '" + domain + "'.", domain, "domain");
         }
         return new ResourcePolicy(d.getArn(), d.getPolicyRevision(), d.getPolicyDocument());
     }
@@ -218,11 +218,11 @@ public class CodeArtifactService implements Resettable {
                                                                       String policyRevision) {
         String owner = effectiveOwner(domainOwner);
         String key = domainKey(region, domain);
-        CodeArtifactDomain d = requireDomain(owner, key);
+        CodeArtifactDomain d = requireDomain(owner, key, domain);
         if (d.getPolicyDocument() == null) {
-            throw notFound("No resource policy is associated with domain '" + domain + "'.");
+            throw notFound("No resource policy is associated with domain '" + domain + "'.", domain, "domain");
         }
-        checkRevision(d.getPolicyRevision(), policyRevision);
+        checkRevision(d.getPolicyRevision(), policyRevision, domain, "domain");
         ResourcePolicy removed = new ResourcePolicy(d.getArn(), d.getPolicyRevision(), d.getPolicyDocument());
         d.setPolicyDocument(null);
         d.setPolicyRevision(null);
@@ -237,15 +237,16 @@ public class CodeArtifactService implements Resettable {
                                                                   List<String> upstreams, Map<String, String> tags) {
         validateRepositoryName(repository);
         String owner = effectiveOwner(domainOwner);
-        requireDomain(owner, domainKey(region, domain));
+        requireDomain(owner, domainKey(region, domain), domain);
         String key = repositoryKey(region, domain, repository);
         if (repositories.getForAccount(owner, key).isPresent()) {
-            throw conflict("Repository with name '" + repository + "' already exists in domain '" + domain + "'.");
+            throw conflict("Repository with name '" + repository + "' already exists in domain '" + domain + "'.",
+                    repository, "repository");
         }
         if (repositoryCountForDomain(owner, region, domain) >= MAX_REPOSITORIES_PER_DOMAIN) {
             throw new AwsException("ServiceQuotaExceededException",
                     "A domain can have a maximum of " + MAX_REPOSITORIES_PER_DOMAIN + " repositories.", 402,
-                    Map.of("resourceId", repository, "resourceType", "repository"));
+                    resourceFields(repository, "repository"));
         }
         validateUpstreams(owner, region, domain, repository, upstreams);
         validateDescription(description);
@@ -260,36 +261,40 @@ public class CodeArtifactService implements Resettable {
         r.setDescription(description);
         r.setUpstreams(upstreams != null ? new ArrayList<>(upstreams) : new ArrayList<>());
         r.setCreatedTime(Instant.now().getEpochSecond());
-        r.setTags(validateTags(tags, Map.of()));
+        r.setTags(validateTags(tags, Map.of(), repository, "repository"));
         repositories.putForAccount(owner, key, r);
         return r;
     }
 
     public synchronized CodeArtifactRepository deleteRepository(String region, String domain, String domainOwner,
                                                                   String repository) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
         repositories.deleteForAccount(owner, key);
         return r;
     }
 
     public CodeArtifactRepository describeRepository(String region, String domain, String domainOwner,
                                                        String repository) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
-        return requireRepository(owner, repositoryKey(region, domain, repository));
+        return requireRepository(owner, repositoryKey(region, domain, repository), repository);
     }
 
     public synchronized CodeArtifactRepository updateRepository(String region, String domain, String domainOwner,
                                                                   String repository, String description,
                                                                   List<String> upstreams) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
         if (upstreams != null) {
             if (!upstreams.isEmpty() && !r.getExternalConnections().isEmpty()) {
                 throw conflict("Repository '" + repository + "' has an external connection; "
-                        + "a repository cannot have both an external connection and upstream repositories.");
+                        + "a repository cannot have both an external connection and upstream repositories.",
+                        repository, "repository");
             }
             validateUpstreams(owner, region, domain, repository, upstreams);
             r.setUpstreams(new ArrayList<>(upstreams));
@@ -319,7 +324,7 @@ public class CodeArtifactService implements Resettable {
                                                                              String repositoryPrefix,
                                                                              Integer maxResults, String nextToken) {
         String owner = effectiveOwner(domainOwner);
-        requireDomain(owner, domainKey(region, domain));
+        requireDomain(owner, domainKey(region, domain), domain);
         List<CodeArtifactRepository> matching = repositories
                 .scanForAccount(owner, k -> k.startsWith(region + "::" + domain + "::"))
                 .stream()
@@ -338,18 +343,20 @@ public class CodeArtifactService implements Resettable {
         if (endpointType != null && !ENDPOINT_TYPES.contains(endpointType)) {
             throw validation("endpointType must be one of " + ENDPOINT_TYPES + ".");
         }
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
-        requireRepository(owner, repositoryKey(region, domain, repository));
+        requireRepository(owner, repositoryKey(region, domain, repository), repository);
         return config.effectiveBaseUrl() + "/codeartifact/" + format + "/" + domain + "/" + repository + "/";
     }
 
     public synchronized ResourcePolicy putRepositoryPermissionsPolicy(String region, String domain,
                                                                        String domainOwner, String repository,
                                                                        String policyDocument, String policyRevision) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
-        checkRevision(r.getPolicyRevision(), policyRevision);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
+        checkRevision(r.getPolicyRevision(), policyRevision, repository, "repository");
         validatePolicyDocument(policyDocument);
         r.setPolicyDocument(policyDocument);
         r.setPolicyRevision(newRevision());
@@ -359,10 +366,12 @@ public class CodeArtifactService implements Resettable {
 
     public ResourcePolicy getRepositoryPermissionsPolicy(String region, String domain, String domainOwner,
                                                           String repository) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
-        CodeArtifactRepository r = requireRepository(owner, repositoryKey(region, domain, repository));
+        CodeArtifactRepository r = requireRepository(owner, repositoryKey(region, domain, repository), repository);
         if (r.getPolicyDocument() == null) {
-            throw notFound("No resource policy is associated with repository '" + repository + "'.");
+            throw notFound("No resource policy is associated with repository '" + repository + "'.",
+                    repository, "repository");
         }
         return new ResourcePolicy(r.getArn(), r.getPolicyRevision(), r.getPolicyDocument());
     }
@@ -370,13 +379,15 @@ public class CodeArtifactService implements Resettable {
     public synchronized ResourcePolicy deleteRepositoryPermissionsPolicy(String region, String domain,
                                                                           String domainOwner, String repository,
                                                                           String policyRevision) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
         if (r.getPolicyDocument() == null) {
-            throw notFound("No resource policy is associated with repository '" + repository + "'.");
+            throw notFound("No resource policy is associated with repository '" + repository + "'.",
+                    repository, "repository");
         }
-        checkRevision(r.getPolicyRevision(), policyRevision);
+        checkRevision(r.getPolicyRevision(), policyRevision, repository, "repository");
         ResourcePolicy removed = new ResourcePolicy(r.getArn(), r.getPolicyRevision(), r.getPolicyDocument());
         r.setPolicyDocument(null);
         r.setPolicyRevision(null);
@@ -391,16 +402,18 @@ public class CodeArtifactService implements Resettable {
         if (format == null) {
             throw validation("externalConnection must be one of " + EXTERNAL_CONNECTIONS.keySet() + ".");
         }
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
         if (!r.getExternalConnections().isEmpty()) {
             throw conflict("Repository '" + repository + "' already has an external connection; "
-                    + "a repository can only have one.");
+                    + "a repository can only have one.", repository, "repository");
         }
         if (!r.getUpstreams().isEmpty()) {
             throw conflict("Repository '" + repository + "' has upstream repositories; "
-                    + "a repository cannot have both an external connection and upstream repositories.");
+                    + "a repository cannot have both an external connection and upstream repositories.",
+                    repository, "repository");
         }
         List<ExternalConnection> connections = new ArrayList<>(r.getExternalConnections());
         connections.add(new ExternalConnection(externalConnection, format, "Available"));
@@ -412,14 +425,15 @@ public class CodeArtifactService implements Resettable {
     public synchronized CodeArtifactRepository disassociateExternalConnection(String region, String domain,
                                                                                String domainOwner, String repository,
                                                                                String externalConnection) {
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
         String key = repositoryKey(region, domain, repository);
-        CodeArtifactRepository r = requireRepository(owner, key);
+        CodeArtifactRepository r = requireRepository(owner, key, repository);
         List<ExternalConnection> connections = new ArrayList<>(r.getExternalConnections());
         boolean removed = connections.removeIf(ec -> ec.getExternalConnectionName().equals(externalConnection));
         if (!removed) {
             throw notFound("Repository '" + repository + "' has no external connection named '"
-                    + externalConnection + "'.");
+                    + externalConnection + "'.", repository, "repository");
         }
         r.setExternalConnections(connections);
         repositories.putForAccount(owner, key, r);
@@ -448,21 +462,23 @@ public class CodeArtifactService implements Resettable {
         byte[] assetContent = content != null ? content : new byte[0];
         if (assetContent.length > MAX_ASSET_FILE_SIZE_BYTES) {
             throw new AwsException("ServiceQuotaExceededException",
-                    "The maximum asset file size is 5 Gigabytes.", 402);
+                    "The maximum asset file size is 5 Gigabytes.", 402,
+                    resourceFields(assetName, "asset"));
         }
         String actualSha256 = sha256Hex(assetContent);
         if (!assetSha256.equalsIgnoreCase(actualSha256)) {
             throw validation("assetSHA256 does not match the SHA-256 hash of the uploaded content.");
         }
 
+        requireNonBlank(domain, "domain");
         String owner = effectiveOwner(domainOwner);
-        requireRepository(owner, repositoryKey(region, domain, repository));
+        requireRepository(owner, repositoryKey(region, domain, repository), repository);
         String key = packageVersionKey(region, domain, repository, format, namespace, packageName, version);
 
         CodeArtifactPackageVersion pv = packageVersions.getForAccount(owner, key).orElse(null);
         if (pv != null && "Published".equals(pv.getStatus())) {
             throw conflict("Package version '" + version + "' of package '" + packageName + "' is already "
-                    + "Published; no additional assets can be uploaded to it.");
+                    + "Published; no additional assets can be uploaded to it.", version, "package-version");
         }
         if (pv == null) {
             pv = new CodeArtifactPackageVersion();
@@ -479,7 +495,8 @@ public class CodeArtifactService implements Resettable {
         Map<String, PackageAsset> assets = new LinkedHashMap<>(pv.getAssets());
         if (!assets.containsKey(assetName) && assets.size() >= MAX_ASSETS_PER_PACKAGE_VERSION) {
             throw new AwsException("ServiceQuotaExceededException",
-                    "A package version can have a maximum of " + MAX_ASSETS_PER_PACKAGE_VERSION + " assets.", 402);
+                    "A package version can have a maximum of " + MAX_ASSETS_PER_PACKAGE_VERSION + " assets.", 402,
+                    resourceFields(version, "package-version"));
         }
 
         PackageAsset asset = new PackageAsset();
@@ -506,11 +523,15 @@ public class CodeArtifactService implements Resettable {
         if (format == null || !PACKAGE_FORMATS.contains(format)) {
             throw validation("format must be one of " + PACKAGE_FORMATS + ".");
         }
+        requireNonBlank(domain, "domain");
+        requireNonBlank(repository, "repository");
+        requireNonBlank(packageName, "package");
+        requireNonBlank(version, "packageVersion");
         String owner = effectiveOwner(domainOwner);
         String key = packageVersionKey(region, domain, repository, format, namespace, packageName, version);
         return packageVersions.getForAccount(owner, key)
                 .orElseThrow(() -> notFound("Package version '" + version + "' of package '" + packageName
-                        + "' was not found."));
+                        + "' was not found.", version, "package-version"));
     }
 
     public PackageVersionAssetResult getPackageVersionAsset(String region, String domain, String domainOwner,
@@ -519,18 +540,24 @@ public class CodeArtifactService implements Resettable {
         if (format == null || !PACKAGE_FORMATS.contains(format)) {
             throw validation("format must be one of " + PACKAGE_FORMATS + ".");
         }
+        requireNonBlank(domain, "domain");
+        requireNonBlank(repository, "repository");
+        requireNonBlank(packageName, "package");
+        requireNonBlank(version, "packageVersion");
+        requireNonBlank(assetName, "asset");
         String owner = effectiveOwner(domainOwner);
         String key = packageVersionKey(region, domain, repository, format, namespace, packageName, version);
         CodeArtifactPackageVersion pv = packageVersions.getForAccount(owner, key)
                 .orElseThrow(() -> notFound("Package version '" + version + "' of package '" + packageName
-                        + "' was not found."));
+                        + "' was not found.", version, "package-version"));
         if (packageVersionRevision != null && !packageVersionRevision.equals(pv.getRevision())) {
             throw notFound("Package version '" + version + "' was not found at revision '"
-                    + packageVersionRevision + "'.");
+                    + packageVersionRevision + "'.", version, "package-version");
         }
         PackageAsset asset = pv.getAssets().get(assetName);
         if (asset == null) {
-            throw notFound("Asset '" + assetName + "' was not found on package version '" + version + "'.");
+            throw notFound("Asset '" + assetName + "' was not found on package version '" + version + "'.",
+                    assetName, "asset");
         }
         // The live object's content may already be populated (same JVM as the publish that set
         // it), but it isn't guaranteed to be: a reload from the persisted store never restores it,
@@ -546,13 +573,13 @@ public class CodeArtifactService implements Resettable {
         ResourceRef ref = parseResourceArn(resourceArn);
         if (ref.repository() == null) {
             String key = domainKey(ref.region(), ref.domain());
-            CodeArtifactDomain d = requireDomain(ref.owner(), key);
-            d.setTags(validateTags(newTags, d.getTags()));
+            CodeArtifactDomain d = requireDomain(ref.owner(), key, ref.domain());
+            d.setTags(validateTags(newTags, d.getTags(), ref.domain(), "domain"));
             domains.putForAccount(ref.owner(), key, d);
         } else {
             String key = repositoryKey(ref.region(), ref.domain(), ref.repository());
-            CodeArtifactRepository r = requireRepository(ref.owner(), key);
-            r.setTags(validateTags(newTags, r.getTags()));
+            CodeArtifactRepository r = requireRepository(ref.owner(), key, ref.repository());
+            r.setTags(validateTags(newTags, r.getTags(), ref.repository(), "repository"));
             repositories.putForAccount(ref.owner(), key, r);
         }
     }
@@ -561,14 +588,14 @@ public class CodeArtifactService implements Resettable {
         ResourceRef ref = parseResourceArn(resourceArn);
         if (ref.repository() == null) {
             String key = domainKey(ref.region(), ref.domain());
-            CodeArtifactDomain d = requireDomain(ref.owner(), key);
+            CodeArtifactDomain d = requireDomain(ref.owner(), key, ref.domain());
             Map<String, String> tags = new LinkedHashMap<>(d.getTags());
             tagKeys.forEach(tags::remove);
             d.setTags(tags);
             domains.putForAccount(ref.owner(), key, d);
         } else {
             String key = repositoryKey(ref.region(), ref.domain(), ref.repository());
-            CodeArtifactRepository r = requireRepository(ref.owner(), key);
+            CodeArtifactRepository r = requireRepository(ref.owner(), key, ref.repository());
             Map<String, String> tags = new LinkedHashMap<>(r.getTags());
             tagKeys.forEach(tags::remove);
             r.setTags(tags);
@@ -579,9 +606,10 @@ public class CodeArtifactService implements Resettable {
     public Map<String, String> listTagsForResource(String resourceArn) {
         ResourceRef ref = parseResourceArn(resourceArn);
         if (ref.repository() == null) {
-            return requireDomain(ref.owner(), domainKey(ref.region(), ref.domain())).getTags();
+            return requireDomain(ref.owner(), domainKey(ref.region(), ref.domain()), ref.domain()).getTags();
         }
-        return requireRepository(ref.owner(), repositoryKey(ref.region(), ref.domain(), ref.repository())).getTags();
+        return requireRepository(ref.owner(), repositoryKey(ref.region(), ref.domain(), ref.repository()),
+                ref.repository()).getTags();
     }
 
     @Override
@@ -645,31 +673,41 @@ public class CodeArtifactService implements Resettable {
         }
         if (upstreams.size() > 10) {
             throw new AwsException("ServiceQuotaExceededException",
-                    "A repository can have a maximum of 10 direct upstream repositories.", 402);
+                    "A repository can have a maximum of 10 direct upstream repositories.", 402,
+                    resourceFields(repository, "repository"));
         }
         for (String upstream : upstreams) {
             if (upstream.equals(repository)) {
                 throw validation("A repository cannot be its own upstream.");
             }
             if (repositories.getForAccount(owner, repositoryKey(region, domain, upstream)).isEmpty()) {
-                throw notFound("Upstream repository '" + upstream + "' was not found in domain '" + domain + "'.");
+                throw notFound("Upstream repository '" + upstream + "' was not found in domain '" + domain + "'.",
+                        upstream, "repository");
             }
         }
     }
 
-    private CodeArtifactDomain requireDomain(String owner, String key) {
+    private CodeArtifactDomain requireDomain(String owner, String key, String domainName) {
+        if (domainName == null || domainName.isBlank()) {
+            throw validation("domain is required.");
+        }
         return domains.getForAccount(owner, key)
-                .orElseThrow(() -> notFound("Domain not found."));
+                .orElseThrow(() -> notFound("Domain not found.", domainName, "domain"));
     }
 
-    private CodeArtifactRepository requireRepository(String owner, String key) {
+    private CodeArtifactRepository requireRepository(String owner, String key, String repositoryName) {
+        if (repositoryName == null || repositoryName.isBlank()) {
+            throw validation("repository is required.");
+        }
         return repositories.getForAccount(owner, key)
-                .orElseThrow(() -> notFound("Repository not found."));
+                .orElseThrow(() -> notFound("Repository not found.", repositoryName, "repository"));
     }
 
-    private void checkRevision(String currentRevision, String requestedRevision) {
+    private void checkRevision(String currentRevision, String requestedRevision, String resourceId,
+                                String resourceType) {
         if (requestedRevision != null && !requestedRevision.equals(currentRevision)) {
-            throw conflict("The policy revision does not match the current policy revision.");
+            throw conflict("The policy revision does not match the current policy revision.", resourceId,
+                    resourceType);
         }
     }
 
@@ -689,6 +727,19 @@ public class CodeArtifactService implements Resettable {
         }
     }
 
+    /**
+     * {@code domain} is required on every operation that takes it, but a repository-scoped
+     * lookup only guards its own {@code repository} argument via {@link #requireRepository}; a
+     * missing domain would otherwise get silently baked into the composite key as the literal
+     * string "null" and surface as a misleading "Repository not found" instead of a proper
+     * validation error.
+     */
+    private static void requireNonBlank(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw validation(fieldName + " is required.");
+        }
+    }
+
     private static void validateDomainName(String domain) {
         if (domain == null || !DOMAIN_NAME.matcher(domain).matches()) {
             throw validation("domain must be 2-50 characters and match [a-z][a-z0-9-]*[a-z0-9].");
@@ -701,7 +752,8 @@ public class CodeArtifactService implements Resettable {
         }
     }
 
-    private static Map<String, String> validateTags(Map<String, String> newTags, Map<String, String> existing) {
+    private static Map<String, String> validateTags(Map<String, String> newTags, Map<String, String> existing,
+                                                      String resourceId, String resourceType) {
         Map<String, String> merged = new LinkedHashMap<>(existing);
         if (newTags == null) {
             return merged;
@@ -717,7 +769,8 @@ public class CodeArtifactService implements Resettable {
         });
         if (merged.size() > 200) {
             throw new AwsException("ServiceQuotaExceededException",
-                    "The maximum number of tags (200) for this resource has been exceeded.", 402);
+                    "The maximum number of tags (200) for this resource has been exceeded.", 402,
+                    resourceFields(resourceId, resourceType));
         }
         return merged;
     }
@@ -859,11 +912,25 @@ public class CodeArtifactService implements Resettable {
         return new AwsException("ValidationException", message, 400);
     }
 
-    private static AwsException conflict(String message) {
-        return new AwsException("ConflictException", message, 409);
+    private static AwsException conflict(String message, String resourceId, String resourceType) {
+        return new AwsException("ConflictException", message, 409, resourceFields(resourceId, resourceType));
     }
 
-    private static AwsException notFound(String message) {
-        return new AwsException("ResourceNotFoundException", message, 404);
+    private static AwsException notFound(String message, String resourceId, String resourceType) {
+        return new AwsException("ResourceNotFoundException", message, 404, resourceFields(resourceId, resourceType));
+    }
+
+    /**
+     * {@link Map#of} rejects null values outright, but a resourceId can legitimately be
+     * unknown at the point an error is raised; omit it rather than let that turn into an NPE
+     * that replaces a clean 4xx with a 500.
+     */
+    private static Map<String, Object> resourceFields(String resourceId, String resourceType) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("resourceType", resourceType);
+        if (resourceId != null) {
+            fields.put("resourceId", resourceId);
+        }
+        return fields;
     }
 }

@@ -68,9 +68,15 @@ returning `ServiceQuotaExceededException`.
 ## AWS-compatible failures
 
 Domain and repository names, tags, pagination, duplicate names, missing upstreams, policy-revision
-mismatches, and non-empty-domain deletes are validated. Floci returns `ValidationException`,
+mismatches, and non-empty-domain deletes are validated. Every action also validates its required
+identifiers (`domain`, `repository`, `package`, `packageVersion`, `asset`) are present, returning
+`ValidationException` rather than a misleading `ResourceNotFoundException` for one that's simply
+missing from the request. Floci returns `ValidationException`,
 `ConflictException`, `ResourceNotFoundException`, and `ServiceQuotaExceededException` (tag limits)
-for deterministic conditions represented by local state.
+for deterministic conditions represented by local state. `ConflictException`,
+`ResourceNotFoundException`, and `ServiceQuotaExceededException` all carry the `resourceId`/
+`resourceType` fields the wire model declares for them, matching the typed accessors the AWS SDK
+exposes on those exceptions.
 
 AWS also models `AccessDeniedException`, `InternalServerException`, and `ThrottlingException`.
 Floci does not inject provider-side failures that cannot be derived from the request or emulator

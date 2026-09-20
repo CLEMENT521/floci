@@ -78,7 +78,10 @@ class CodeArtifactTest {
     @DisplayName("CreateDomain - duplicate returns ConflictException")
     void createDomainDuplicateFails() {
         assertThatThrownBy(() -> codeArtifact.createDomain(r -> r.domain(DOMAIN)))
-                .isInstanceOf(ConflictException.class);
+                .isInstanceOfSatisfying(ConflictException.class, e -> {
+                    assertThat(e.resourceId()).isEqualTo(DOMAIN);
+                    assertThat(e.resourceTypeAsString()).isEqualTo("domain");
+                });
     }
 
     @Test
@@ -88,7 +91,10 @@ class CodeArtifactTest {
         assertThatThrownBy(() -> codeArtifact.createRepository(r -> r
                         .domain("does-not-exist-domain")
                         .repository(REPO)))
-                .isInstanceOf(ResourceNotFoundException.class);
+                .isInstanceOfSatisfying(ResourceNotFoundException.class, e -> {
+                    assertThat(e.resourceId()).isEqualTo("does-not-exist-domain");
+                    assertThat(e.resourceTypeAsString()).isEqualTo("domain");
+                });
     }
 
     @Test

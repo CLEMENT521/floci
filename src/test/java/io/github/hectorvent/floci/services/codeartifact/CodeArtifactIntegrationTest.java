@@ -199,6 +199,19 @@ class CodeArtifactIntegrationTest {
                 .then().statusCode(200).body("packageVersion.status", equalTo("Unfinished"));
     }
 
+    @Test
+    void missingRequiredQueryParamsReturnValidationExceptionNotServerError() {
+        given().header("Authorization", AUTH).get("/v1/domain")
+                .then().statusCode(400).body("__type", equalTo("ValidationException"));
+
+        given().header("Authorization", AUTH).get("/v1/repository")
+                .then().statusCode(400).body("__type", equalTo("ValidationException"));
+
+        given().header("Authorization", AUTH)
+                .get("/v1/repository/endpoint?repository=r&format=npm")
+                .then().statusCode(400).body("__type", equalTo("ValidationException"));
+    }
+
     private static String sha256Hex(byte[] content) {
         try {
             return SigV4RequestValidator.sha256Hex(content);
