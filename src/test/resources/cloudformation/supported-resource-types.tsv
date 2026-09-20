@@ -104,8 +104,8 @@ AWS::KinesisFirehose::DeliveryStream	FirehoseCfnProvisioner
 AWS::Lambda::Alias	LambdaVersionAliasCfnProvisioner
 AWS::Lambda::EventInvokeConfig	LambdaEventInvokeConfigCfnProvisioner
 AWS::Lambda::EventSourceMapping	LambdaEventSourceMappingCfnProvisioner
-AWS::Lambda::Function	LEGACY_SWITCH
-AWS::Lambda::LayerVersion	LEGACY_SWITCH
+AWS::Lambda::Function	LambdaCfnProvisioner
+AWS::Lambda::LayerVersion	LambdaCfnProvisioner
 AWS::Lambda::MicrovmImage	LambdaMicrovmsCfnProvisioner
 AWS::Lambda::NetworkConnector	LambdaMicrovmsCfnProvisioner
 AWS::Lambda::Permission	LambdaAddressingCfnProvisioner

@@ -65,6 +65,7 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.FirehoseC
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamAccessKeyCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamInstanceProfileCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamManagedPolicyCfnProvisioner;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.LambdaCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamPolicyCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamRoleCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.IamUserCfnProvisioner;
@@ -247,6 +248,9 @@ final class CfnProvisionerFixture {
             discovered.add(new CdkMetadataCfnProvisioner());
             if (stepFunctionsService != null) {
                 discovered.add(new StepFunctionsCfnProvisioner(stepFunctionsService, s3Service, objectMapper));
+            }
+            if (lambdaService != null) {
+                discovered.add(new LambdaCfnProvisioner(lambdaService, lambdaLayerService, s3Service, config));
             }
             if (s3Service != null) {
                 discovered.add(new S3CfnProvisioner(s3Service));
@@ -701,10 +705,8 @@ final class CfnProvisionerFixture {
             }
             ensureDynamicReferences();
             return new CloudFormationResourceProvisioner(
-                    s3Service,
                     lambdaService,
                     iamService,
-                    lambdaLayerService,
                     objectMapper,
                     customResourceResponseStore,
                     reachableEndpoint,
