@@ -22,7 +22,6 @@ import io.github.hectorvent.floci.services.lambda.model.LambdaLayerVersion;
 import io.github.hectorvent.floci.services.pipes.model.DesiredState;
 import io.github.hectorvent.floci.services.s3.S3Service;
 import io.github.hectorvent.floci.services.ssm.model.Parameter;
-import io.github.hectorvent.floci.services.apigatewayv2.ApiGatewayV2Service;
 import io.github.hectorvent.floci.services.apigatewayv2.model.*;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
@@ -65,11 +64,6 @@ public class CloudFormationResourceProvisioner {
     private static final int LAMBDA_DEFAULT_MEMORY_MB = 128;
     private static final int LAMBDA_DEFAULT_EPHEMERAL_STORAGE_MB = 512;
     private static final String LAMBDA_DEFAULT_TRACING_MODE = "PassThrough";
-    private static final String APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR = "__FlociApiGatewayV2BodyRouteIds";
-    private static final String APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR =
-            "__FlociApiGatewayV2BodyIntegrationIds";
-    private static final String APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR =
-            "__FlociApiGatewayV2BodyAuthorizerIds";
 
     /**
      * Types whose delete needs the whole {@link StackResource} — a create-time attribute (the
@@ -84,7 +78,6 @@ public class CloudFormationResourceProvisioner {
      * {@code CfnDeletePrecedenceTest} fails while both claim it.
      */
     static final Set<String> DELETE_NEEDS_STACK_RESOURCE = Set.of(
-            "AWS::ApiGatewayV2::Authorizer",
             "AWS::CloudFormation::CustomResource");
 
     /**
@@ -95,12 +88,6 @@ public class CloudFormationResourceProvisioner {
      * {@code CfnResourceInventoryTest}.
      */
     static final Set<String> LEGACY_SWITCH_TYPES = Set.of(
-            "AWS::ApiGatewayV2::Api",
-            "AWS::ApiGatewayV2::Authorizer",
-            "AWS::ApiGatewayV2::Deployment",
-            "AWS::ApiGatewayV2::Integration",
-            "AWS::ApiGatewayV2::Route",
-            "AWS::ApiGatewayV2::Stage",
             "AWS::CloudFormation::CustomResource",
             "AWS::Lambda::Function",
             "AWS::Lambda::LayerVersion");
@@ -118,7 +105,6 @@ public class CloudFormationResourceProvisioner {
     private final S3Service s3Service;
     private final LambdaService lambdaService;
     private final IamService iamService;
-    private final ApiGatewayV2Service apiGatewayV2Service;
     private final LambdaLayerService lambdaLayerService;
     private final ObjectMapper objectMapper;
     private final CustomResourceResponseStore customResourceResponseStore;
@@ -134,7 +120,6 @@ public class CloudFormationResourceProvisioner {
     public CloudFormationResourceProvisioner(S3Service s3Service,
                                              LambdaService lambdaService,
                                              IamService iamService,
-                                             ApiGatewayV2Service apiGatewayV2Service,
                                              LambdaLayerService lambdaLayerService,
                                              ObjectMapper objectMapper,
                                              CustomResourceResponseStore customResourceResponseStore,
@@ -146,7 +131,6 @@ public class CloudFormationResourceProvisioner {
         this.s3Service = s3Service;
         this.lambdaService = lambdaService;
         this.iamService = iamService;
-        this.apiGatewayV2Service = apiGatewayV2Service;
         this.lambdaLayerService = lambdaLayerService;
         this.objectMapper = objectMapper;
         this.customResourceResponseStore = customResourceResponseStore;
@@ -207,12 +191,6 @@ public class CloudFormationResourceProvisioner {
                 case "AWS::Lambda::Function" -> provisionLambda(resource, properties, engine, region, accountId, stackName);
                 case "AWS::Lambda::LayerVersion" ->
                         provisionLambdaLayerVersion(resource, properties, engine, region, stackName);
-                case "AWS::ApiGatewayV2::Api" -> provisionApiGatewayV2Api(resource, properties, engine, region, accountId, stackName);
-                case "AWS::ApiGatewayV2::Authorizer" -> provisionApiGatewayV2Authorizer(resource, properties, engine, region);
-                case "AWS::ApiGatewayV2::Route" -> provisionApiGatewayV2Route(resource, properties, engine, region);
-                case "AWS::ApiGatewayV2::Integration" -> provisionApiGatewayV2Integration(resource, properties, engine, region);
-                case "AWS::ApiGatewayV2::Stage" -> provisionApiGatewayV2Stage(resource, properties, engine, region);
-                case "AWS::ApiGatewayV2::Deployment" -> provisionApiGatewayV2Deployment(resource, properties, engine, region);
                 case "AWS::CloudFormation::CustomResource" ->
                         provisionCustomResource(resource, properties, engine, region, accountId, stackName);
                 default -> {
@@ -357,21 +335,6 @@ public class CloudFormationResourceProvisioner {
             deleteCustomResource(resource, region);
             return;
         }
-        // Authorizer deletion needs the api id (a stored attribute, not the physical id, which is
-        // the authorizer id) — same shape as the Nodegroup case above. Without this, the generic
-        // type/physicalId delete path has no case for this type at all and silently no-ops,
-        // leaving the authorizer behind in AWS after the stack reports deleted.
-        if ("AWS::ApiGatewayV2::Authorizer".equals(resourceType)) {
-            String apiId = resource.getAttributes().get("ApiId");
-            if (apiId != null && !apiId.isBlank()) {
-                try {
-                    apiGatewayV2Service.deleteAuthorizer(region, apiId, resource.getPhysicalId());
-                } catch (Exception e) {
-                    LOG.debugv("Error deleting authorizer {0}: {1}", resource.getPhysicalId(), e.getMessage());
-                }
-            }
-            return;
-        }
         throw new IllegalStateException("DELETE_NEEDS_STACK_RESOURCE lists " + resourceType
                 + " but no branch here deletes it — deleting it by physical id alone would "
                 + "silently no-op and leave the resource live.");
@@ -394,7 +357,6 @@ public class CloudFormationResourceProvisioner {
         switch (resourceType) {
             case "AWS::Lambda::Function" -> deleteLambdaFunctionSafe(physicalId, region);
             // No bus context on the type/physicalId path (e.g. CREATE-rollback); targets the default bus.
-            case "AWS::ApiGatewayV2::Api" -> apiGatewayV2Service.deleteApi(region, physicalId);
             case "AWS::Lambda::LayerVersion" -> deleteLambdaLayerVersion(physicalId, region);
             // Warn for the same reason the create path does: the delete reports success over a
             // type nothing here removes, and at debug that is invisible at the default log level.
@@ -1167,478 +1129,6 @@ public class CloudFormationResourceProvisioner {
 
     // ── ApiGateway (V1) ──────────────────────────────────────────────────────
 
-    // ── ApiGatewayV2 (HTTP/WebSocket) ────────────────────────────────────────
-
-    private void provisionApiGatewayV2Api(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                          String region, String accountId, String stackName) {
-        String name = resolveOptional(props, "Name", engine);
-        if (name == null || name.isBlank()) {
-            name = generatePhysicalName(stackName, r.getLogicalId(), 255, false);
-        }
-        Map<String, Object> req = new HashMap<>();
-        req.put("name", name);
-        req.put("protocolType", resolveOrDefault(props, "ProtocolType", engine, "HTTP"));
-        req.put("routeSelectionExpression", resolveOptional(props, "RouteSelectionExpression", engine));
-        req.put("description", resolveOptional(props, "Description", engine));
-        req.put("apiKeySelectionExpression", resolveOptional(props, "ApiKeySelectionExpression", engine));
-
-        Map<String, String> tags = parseApiGatewayV2Tags(props != null ? props.get("Tags") : null, engine);
-        if (!tags.isEmpty()) {
-            req.put("tags", tags);
-        }
-
-        Map<String, Object> cors = parseApiGatewayV2Cors(props != null ? props.get("CorsConfiguration") : null, engine);
-        if (cors != null) {
-            req.put("corsConfiguration", cors);
-        }
-
-        Api api;
-        if (r.getPhysicalId() == null) {
-            api = apiGatewayV2Service.createApi(region, req);
-        } else {
-            api = apiGatewayV2Service.updateApi(region, r.getPhysicalId(), req);
-        }
-        r.setPhysicalId(api.getApiId());
-        r.getAttributes().put("ApiEndpoint", api.getApiEndpoint());
-        reconcileApiGatewayV2BodyRoutes(r, region, api.getApiId(), props, engine);
-    }
-
-    /**
-     * Reconciles the routes, integrations, and authorizers materialized from an ApiGatewayV2 OpenAPI body.
-     * Only IDs stored on this CloudFormation resource are removed, so separately declared V2
-     * resources remain outside this generated-resource lifecycle.
-     */
-    private void reconcileApiGatewayV2BodyRoutes(StackResource r, String region, String apiId, JsonNode props,
-                                                 CloudFormationTemplateEngine engine) {
-        JsonNode body = OpenApiDocuments.resolve(props, engine, s3Service, objectMapper);
-        ApiGatewayV2BodyResourceState previous = null;
-        try {
-            previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
-            // API Gateway requires route keys to be unique. Remove only the tracked body-generated
-            // resources before creating their replacements; rollback restores this snapshot.
-            deleteApiGatewayV2BodyResources(r, region, apiId);
-        } catch (RuntimeException e) {
-            rollbackApiGatewayV2BodyReplacement(r, region, apiId,
-                    new ApiGatewayV2BodyResources(List.of(), List.of(), List.of()), previous, e);
-            throw e;
-        }
-
-        if (body == null) {
-            return;
-        }
-
-        ApiGatewayV2BodyResources replacement;
-        try {
-            replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
-        } catch (ApiGatewayV2BodyMaterializationException e) {
-            rollbackApiGatewayV2BodyReplacement(r, region, apiId, e.resources(), previous, e);
-            throw e;
-        } catch (RuntimeException e) {
-            // materializeApiGatewayV2BodyRoutes already removed its partial replacement.
-            rollbackApiGatewayV2BodyReplacement(r, region, apiId,
-                    new ApiGatewayV2BodyResources(List.of(), List.of(), List.of()), previous, e);
-            throw e;
-        }
-        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, replacement.routeIds());
-        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
-                replacement.integrationIds());
-        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR,
-                replacement.authorizerIds());
-    }
-
-    /**
-     * CloudFormation's ApiGatewayV2 {@code Body} is an OpenAPI document. Materialize each
-     * declared HTTP operation as the route that API Gateway V2 serves, including its OpenAPI
-     * security requirement and a route target when it declares an integration extension.
-     */
-    private ApiGatewayV2BodyResources materializeApiGatewayV2BodyRoutes(String region, String apiId,
-                                                                          JsonNode body) {
-        List<String> routeIds = new ArrayList<>();
-        List<String> integrationIds = new ArrayList<>();
-        List<String> authorizerIds = new ArrayList<>();
-        try {
-            Map<String, OpenApiAuthorizerBinding> authorizers = materializeApiGatewayV2BodyAuthorizers(
-                    region, apiId, body, authorizerIds);
-            JsonNode paths = body.path("paths");
-            if (!paths.isObject()) {
-                return new ApiGatewayV2BodyResources(routeIds, integrationIds, authorizerIds);
-            }
-
-            Iterator<Map.Entry<String, JsonNode>> pathEntries = paths.fields();
-            while (pathEntries.hasNext()) {
-                Map.Entry<String, JsonNode> pathEntry = pathEntries.next();
-                if (!pathEntry.getValue().isObject()) {
-                    continue;
-                }
-                Iterator<Map.Entry<String, JsonNode>> operations = pathEntry.getValue().fields();
-                while (operations.hasNext()) {
-                    Map.Entry<String, JsonNode> operation = operations.next();
-                    String method = operation.getKey();
-                    if (!isHttpApiOperation(method) || !operation.getValue().isObject()) {
-                        continue;
-                    }
-
-                    Map<String, Object> routeRequest = new HashMap<>();
-                    routeRequest.put("routeKey", openApiRouteKey(method, pathEntry.getKey()));
-                    applyOpenApiRouteSecurity(body, operation.getValue(), pathEntry.getKey(), method,
-                            authorizers, routeRequest);
-                    JsonNode integration = operation.getValue().path("x-amazon-apigateway-integration");
-                    if (integration.isObject()) {
-                        String integrationType = textOrNull(integration, "type");
-                        if (integrationType != null && !integrationType.isBlank()) {
-                            Map<String, Object> integrationRequest = new HashMap<>();
-                            integrationRequest.put("integrationType", integrationType.toUpperCase(Locale.ROOT));
-                            putOpenApiIntegrationValue(integrationRequest, "integrationUri", integration, "uri");
-                            putOpenApiIntegrationValue(integrationRequest, "integrationMethod", integration,
-                                    "httpMethod");
-                            putOpenApiIntegrationValue(integrationRequest, "payloadFormatVersion", integration,
-                                    "payloadFormatVersion");
-                            Integration createdIntegration = apiGatewayV2Service.createIntegration(region, apiId,
-                                    integrationRequest);
-                            integrationIds.add(createdIntegration.getIntegrationId());
-                            routeRequest.put("target", "integrations/" + createdIntegration.getIntegrationId());
-                        }
-                    }
-                    Route createdRoute = apiGatewayV2Service.createRoute(region, apiId, routeRequest);
-                    routeIds.add(createdRoute.getRouteId());
-                }
-            }
-            return new ApiGatewayV2BodyResources(routeIds, integrationIds, authorizerIds);
-        } catch (RuntimeException e) {
-            ApiGatewayV2BodyResources partial = new ApiGatewayV2BodyResources(
-                    routeIds, integrationIds, authorizerIds);
-            List<RuntimeException> cleanupFailures = cleanupApiGatewayV2BodyResources(region, apiId, partial);
-            if (!cleanupFailures.isEmpty()) {
-                cleanupFailures.forEach(e::addSuppressed);
-                throw new ApiGatewayV2BodyMaterializationException(e, partial);
-            }
-            throw e;
-        }
-    }
-
-    private Map<String, OpenApiAuthorizerBinding> materializeApiGatewayV2BodyAuthorizers(
-            String region, String apiId, JsonNode body, List<String> authorizerIds) {
-        Map<String, OpenApiAuthorizerBinding> bindings = new LinkedHashMap<>();
-        JsonNode schemes = body.path("components").path("securitySchemes");
-        if (!schemes.isObject()) {
-            return bindings;
-        }
-
-        Iterator<Map.Entry<String, JsonNode>> entries = schemes.fields();
-        while (entries.hasNext()) {
-            Map.Entry<String, JsonNode> entry = entries.next();
-            String schemeName = entry.getKey();
-            JsonNode scheme = entry.getValue();
-            if (!scheme.isObject()) {
-                continue;
-            }
-
-            JsonNode definition = scheme.path("x-amazon-apigateway-authorizer");
-            if (!definition.isObject()) {
-                continue;
-            }
-
-            String type = textOrNull(definition, "type");
-            String authorizerType;
-            String routeAuthorizationType;
-            if ("jwt".equalsIgnoreCase(type)) {
-                authorizerType = "JWT";
-                routeAuthorizationType = "JWT";
-            } else if ("request".equalsIgnoreCase(type)) {
-                authorizerType = "REQUEST";
-                routeAuthorizationType = "CUSTOM";
-            } else {
-                throw invalidOpenApiV2Security("Authorizer " + schemeName
-                        + " must declare type jwt or request");
-            }
-
-            Map<String, Object> request = new HashMap<>();
-            request.put("name", schemeName);
-            request.put("authorizerType", authorizerType);
-            putOpenApiAuthorizerIdentitySource(request, definition);
-            putOpenApiAuthorizerValue(request, "authorizerUri", definition, "authorizerUri");
-            putOpenApiAuthorizerValue(request, "authorizerPayloadFormatVersion", definition,
-                    "authorizerPayloadFormatVersion");
-            putOpenApiAuthorizerValue(request, "authorizerResultTtlInSeconds", definition,
-                    "authorizerResultTtlInSeconds");
-            putOpenApiAuthorizerValue(request, "enableSimpleResponses", definition,
-                    "enableSimpleResponses");
-
-            if ("JWT".equals(authorizerType)) {
-                JsonNode jwt = definition.path("jwtConfiguration");
-                if (!jwt.isObject()) {
-                    throw invalidOpenApiV2Security("JWT authorizer " + schemeName
-                            + " must declare jwtConfiguration");
-                }
-                Map<String, Object> jwtConfiguration = new HashMap<>();
-                jwtConfiguration.put("issuer", textOrNull(jwt, "issuer"));
-                jwtConfiguration.put("audience", openApiStringList(jwt.get("audience"),
-                        "jwtConfiguration.audience for authorizer " + schemeName));
-                request.put("jwtConfiguration", jwtConfiguration);
-            }
-
-            Authorizer created = apiGatewayV2Service.createAuthorizer(region, apiId, request);
-            authorizerIds.add(created.getAuthorizerId());
-            bindings.put(schemeName,
-                    new OpenApiAuthorizerBinding(routeAuthorizationType, created.getAuthorizerId()));
-        }
-        return bindings;
-    }
-
-    private void applyOpenApiRouteSecurity(JsonNode body, JsonNode operation, String path, String method,
-                                           Map<String, OpenApiAuthorizerBinding> authorizers,
-                                           Map<String, Object> routeRequest) {
-        JsonNode security = operation.has("security") ? operation.get("security") : body.get("security");
-        if (security == null || security.isNull() || security.isMissingNode()) {
-            return;
-        }
-        if (!security.isArray()) {
-            throw invalidOpenApiV2Security("security must be an array");
-        }
-        if (security.isEmpty()) {
-            routeRequest.put("authorizationType", "NONE");
-            return; // An operation-level empty array explicitly overrides inherited security.
-        }
-
-        // Each object is one alternative in the outer OR-list, but names inside one object are
-        // an AND requirement. A V2 route can attach only one authorizer, so accepting a multi-name
-        // object would silently weaken its authentication contract. AWS classifies multiple
-        // security requirements as an HTTP API import error:
-        // https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-open-api.html
-        // Validate every alternative before selecting a representable one.
-        for (JsonNode requirement : security) {
-            if (!requirement.isObject()) {
-                throw invalidOpenApiV2Security("security requirements must be objects");
-            }
-            if (requirement.isEmpty()) {
-                routeRequest.put("authorizationType", "NONE");
-                return; // An empty requirement allows anonymous access by OpenAPI definition.
-            }
-            if (requirement.size() > 1) {
-                throw invalidOpenApiV2Security(
-                        "HTTP API routes do not support AND security requirements with multiple schemes");
-            }
-        }
-        if (security.size() > 1) {
-            throw invalidOpenApiV2Security(
-                    "HTTP API routes do not support OR security requirements with multiple alternatives");
-        }
-
-        String unsupportedScheme = null;
-        for (JsonNode requirement : security) {
-            Iterator<Map.Entry<String, JsonNode>> schemes = requirement.fields();
-            while (schemes.hasNext()) {
-                Map.Entry<String, JsonNode> scheme = schemes.next();
-                OpenApiAuthorizerBinding binding = authorizers.get(scheme.getKey());
-                if (binding == null) {
-                    unsupportedScheme = scheme.getKey();
-                    continue;
-                }
-                routeRequest.put("authorizationType", binding.authorizationType());
-                if (binding.authorizerId() != null) {
-                    routeRequest.put("authorizerId", binding.authorizerId());
-                }
-                if ("JWT".equals(binding.authorizationType())) {
-                    List<String> scopes = openApiStringList(scheme.getValue(),
-                            "security scopes for scheme " + scheme.getKey());
-                    if (!scopes.isEmpty()) {
-                        routeRequest.put("authorizationScopes", scopes);
-                    }
-                }
-                return;
-            }
-        }
-        throw invalidOpenApiV2Security(
-                "Protected operation " + openApiRouteKey(method, path)
-                        + " references unsupported security scheme '" + unsupportedScheme + "'");
-    }
-
-    private static void putOpenApiAuthorizerIdentitySource(Map<String, Object> request, JsonNode definition) {
-        JsonNode identitySource = definition.get("identitySource");
-        if (identitySource == null || identitySource.isNull()) {
-            return;
-        }
-        if (identitySource.isTextual()) {
-            request.put("identitySource", identitySource.asText());
-            return;
-        }
-        request.put("identitySource", openApiStringList(identitySource, "authorizer identitySource"));
-    }
-
-    private static void putOpenApiAuthorizerValue(Map<String, Object> request, String requestKey,
-                                                   JsonNode definition, String definitionKey) {
-        JsonNode value = definition.get(definitionKey);
-        if (value == null || value.isNull()) {
-            return;
-        }
-        if (value.isTextual()) {
-            request.put(requestKey, value.asText());
-        } else if (value.isBoolean()) {
-            request.put(requestKey, value.booleanValue());
-        } else if (value.isIntegralNumber()) {
-            request.put(requestKey, value.intValue());
-        } else {
-            throw invalidOpenApiV2Security(definitionKey + " has an invalid value");
-        }
-    }
-
-    private static List<String> openApiStringList(JsonNode value, String fieldName) {
-        if (value == null || value.isNull()) {
-            return List.of();
-        }
-        if (!value.isArray()) {
-            throw invalidOpenApiV2Security(fieldName + " must be an array of strings");
-        }
-        List<String> values = new ArrayList<>();
-        for (JsonNode element : value) {
-            if (!element.isTextual()) {
-                throw invalidOpenApiV2Security(fieldName + " must be an array of strings");
-            }
-            values.add(element.asText());
-        }
-        return values;
-    }
-
-    private static AwsException invalidOpenApiV2Security(String message) {
-        return new AwsException("ValidationException", message, 400);
-    }
-
-    private void deleteApiGatewayV2BodyResources(StackResource r, String region, String apiId) {
-        deleteApiGatewayV2BodyResources(region, apiId, new ApiGatewayV2BodyResources(
-                apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR),
-                apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR),
-                apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR)));
-        r.getAttributes().remove(APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR);
-        r.getAttributes().remove(APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR);
-        r.getAttributes().remove(APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR);
-    }
-
-    private void deleteApiGatewayV2BodyResources(String region, String apiId,
-                                                 ApiGatewayV2BodyResources resources) {
-        for (String routeId : resources.routeIds()) {
-            deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
-        }
-        for (String integrationId : resources.integrationIds()) {
-            deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
-        }
-        for (String authorizerId : resources.authorizerIds()) {
-            deleteApiGatewayV2BodyAuthorizerIfPresent(region, apiId, authorizerId);
-        }
-    }
-
-    private ApiGatewayV2BodyResourceState snapshotApiGatewayV2BodyResources(StackResource r, String region,
-                                                                               String apiId) {
-        List<Route> routes = new ArrayList<>();
-        for (String routeId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR)) {
-            try {
-                routes.add(apiGatewayV2Service.getRoute(region, apiId, routeId));
-            } catch (AwsException e) {
-                if (e.getHttpStatus() != 404) {
-                    throw e;
-                }
-            }
-        }
-
-        List<Integration> integrations = new ArrayList<>();
-        for (String integrationId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR)) {
-            try {
-                integrations.add(apiGatewayV2Service.getIntegration(region, apiId, integrationId));
-            } catch (AwsException e) {
-                if (e.getHttpStatus() != 404) {
-                    throw e;
-                }
-            }
-        }
-
-        List<Authorizer> authorizers = new ArrayList<>();
-        for (String authorizerId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR)) {
-            try {
-                authorizers.add(apiGatewayV2Service.getAuthorizer(region, apiId, authorizerId));
-            } catch (AwsException e) {
-                if (e.getHttpStatus() != 404) {
-                    throw e;
-                }
-            }
-        }
-        return new ApiGatewayV2BodyResourceState(routes, integrations, authorizers);
-    }
-
-    private void rollbackApiGatewayV2BodyReplacement(StackResource r, String region, String apiId,
-                                                      ApiGatewayV2BodyResources replacement,
-                                                      ApiGatewayV2BodyResourceState previous,
-                                                      RuntimeException failure) {
-        List<RuntimeException> cleanupFailures = cleanupApiGatewayV2BodyResources(region, apiId, replacement);
-
-        if (previous != null) {
-            storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR,
-                    previous.routes().stream().map(Route::getRouteId).toList());
-            storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
-                    previous.integrations().stream().map(Integration::getIntegrationId).toList());
-            storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR,
-                    previous.authorizers().stream().map(Authorizer::getAuthorizerId).toList());
-        }
-        if (!cleanupFailures.isEmpty()) {
-            cleanupFailures.forEach(failure::addSuppressed);
-            retainApiGatewayV2BodyResourceIds(r, replacement);
-        }
-        if (previous == null) {
-            return;
-        }
-        try {
-            // Routes refer to integrations and authorizers, so restore both before their routes.
-            for (Authorizer authorizer : previous.authorizers()) {
-                apiGatewayV2Service.restoreAuthorizer(region, apiId, authorizer);
-            }
-            for (Integration integration : previous.integrations()) {
-                apiGatewayV2Service.restoreIntegration(region, apiId, integration);
-            }
-            for (Route route : previous.routes()) {
-                apiGatewayV2Service.restoreRoute(region, apiId, route, replacement.routeIds());
-            }
-        } catch (RuntimeException restoreFailure) {
-            failure.addSuppressed(restoreFailure);
-            String reason = restoreFailure.getMessage() != null
-                    ? restoreFailure.getMessage()
-                    : restoreFailure.getClass().getSimpleName();
-            r.getAttributes().put(UPDATE_ROLLBACK_FAILURE_ATTR, reason);
-        }
-    }
-
-    private List<RuntimeException> cleanupApiGatewayV2BodyResources(String region, String apiId,
-                                                                      ApiGatewayV2BodyResources resources) {
-        List<RuntimeException> failures = new ArrayList<>();
-        for (String routeId : resources.routeIds()) {
-            try {
-                deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
-            } catch (RuntimeException e) {
-                failures.add(e);
-            }
-        }
-        for (String integrationId : resources.integrationIds()) {
-            try {
-                deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
-            } catch (RuntimeException e) {
-                failures.add(e);
-            }
-        }
-        for (String authorizerId : resources.authorizerIds()) {
-            try {
-                deleteApiGatewayV2BodyAuthorizerIfPresent(region, apiId, authorizerId);
-            } catch (RuntimeException e) {
-                failures.add(e);
-            }
-        }
-        return failures;
-    }
-
-    private void retainApiGatewayV2BodyResourceIds(StackResource r, ApiGatewayV2BodyResources resources) {
-        retainApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, resources.routeIds());
-        retainApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
-                resources.integrationIds());
-        retainApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR,
-                resources.authorizerIds());
-    }
-
     /**
      * Carries ownership discovered by a failed update onto the last known-good resource metadata
      * that CloudFormation restores. Only additive cleanup tracking belongs here; normal attempted
@@ -1648,290 +1138,13 @@ public class CloudFormationResourceProvisioner {
         // Any provisioner using ReplacementCleanup: an entity the failed attempt created and could
         // not remove is owed to the next cleanup, which runs on the restored resource.
         ReplacementCleanup.mergeDisplaced(previous, attempted);
-        if (!"AWS::ApiGatewayV2::Api".equals(previous.getResourceType())
-                || !Objects.equals(previous.getResourceType(), attempted.getResourceType())) {
+        if (!Objects.equals(previous.getResourceType(), attempted.getResourceType())) {
             return;
         }
-        retainApiGatewayV2BodyResourceIds(previous, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR,
-                apiGatewayV2BodyResourceIds(attempted, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR));
-        retainApiGatewayV2BodyResourceIds(previous, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
-                apiGatewayV2BodyResourceIds(attempted, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR));
-        retainApiGatewayV2BodyResourceIds(previous, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR,
-                apiGatewayV2BodyResourceIds(attempted, APIGATEWAY_V2_BODY_AUTHORIZER_IDS_ATTR));
-    }
-
-    private static void retainApiGatewayV2BodyResourceIds(StackResource r, String attributeName,
-                                                           List<String> resourceIds) {
-        LinkedHashSet<String> retained = new LinkedHashSet<>(apiGatewayV2BodyResourceIds(r, attributeName));
-        retained.addAll(resourceIds);
-        storeApiGatewayV2BodyResourceIds(r, attributeName, new ArrayList<>(retained));
-    }
-
-    private static List<String> apiGatewayV2BodyResourceIds(StackResource r, String attributeName) {
-        String ids = r.getAttributes().get(attributeName);
-        return ids == null || ids.isBlank() ? List.of() : Arrays.asList(ids.split(","));
-    }
-
-    private static void storeApiGatewayV2BodyResourceIds(StackResource r, String attributeName,
-                                                          List<String> resourceIds) {
-        if (resourceIds.isEmpty()) {
-            r.getAttributes().remove(attributeName);
-        } else {
-            r.getAttributes().put(attributeName, String.join(",", resourceIds));
-        }
-    }
-
-    private void deleteApiGatewayV2BodyRouteIfPresent(String region, String apiId, String routeId) {
-        try {
-            apiGatewayV2Service.deleteRoute(region, apiId, routeId);
-        } catch (AwsException e) {
-            if (e.getHttpStatus() != 404) {
-                throw e;
-            }
-        }
-    }
-
-    private void deleteApiGatewayV2BodyIntegrationIfPresent(String region, String apiId, String integrationId) {
-        try {
-            apiGatewayV2Service.deleteIntegration(region, apiId, integrationId);
-        } catch (AwsException e) {
-            if (e.getHttpStatus() != 404) {
-                throw e;
-            }
-        }
-    }
-
-    private void deleteApiGatewayV2BodyAuthorizerIfPresent(String region, String apiId, String authorizerId) {
-        try {
-            apiGatewayV2Service.deleteAuthorizer(region, apiId, authorizerId);
-        } catch (AwsException e) {
-            if (e.getHttpStatus() != 404) {
-                throw e;
-            }
-        }
-    }
-
-    private record ApiGatewayV2BodyResources(List<String> routeIds, List<String> integrationIds,
-                                             List<String> authorizerIds) {}
-
-    private record ApiGatewayV2BodyResourceState(List<Route> routes, List<Integration> integrations,
-                                                 List<Authorizer> authorizers) {}
-
-    private record OpenApiAuthorizerBinding(String authorizationType, String authorizerId) {}
-
-    private static final class ApiGatewayV2BodyMaterializationException extends RuntimeException {
-        private final ApiGatewayV2BodyResources resources;
-
-        private ApiGatewayV2BodyMaterializationException(RuntimeException cause,
-                                                          ApiGatewayV2BodyResources resources) {
-            super(cause.getMessage(), cause);
-            this.resources = resources;
-        }
-
-        private ApiGatewayV2BodyResources resources() {
-            return resources;
-        }
-    }
-
-    private static boolean isHttpApiOperation(String method) {
-        return switch (method.toLowerCase(Locale.ROOT)) {
-            case "get", "put", "post", "delete", "options", "head", "patch", "trace",
-                    "x-amazon-apigateway-any-method" -> true;
-            default -> false;
-        };
-    }
-
-    private static String openApiRouteKey(String method, String path) {
-        String routeMethod = "x-amazon-apigateway-any-method".equals(method) ? "ANY"
-                : method.toUpperCase(Locale.ROOT);
-        return routeMethod + " " + path;
-    }
-
-    private static void putOpenApiIntegrationValue(Map<String, Object> request, String requestKey,
-                                                   JsonNode integration, String openApiKey) {
-        String value = textOrNull(integration, openApiKey);
-        if (value != null) {
-            request.put(requestKey, value);
-        }
-    }
-
-    private Map<String, String> parseApiGatewayV2Tags(JsonNode tagsNode, CloudFormationTemplateEngine engine) {
-        Map<String, String> out = new HashMap<>();
-        if (tagsNode == null || tagsNode.isNull()) {
-            return out;
-        }
-        JsonNode resolved = engine.resolveNode(tagsNode);
-        if (!resolved.isObject()) {
-            return out;
-        }
-        resolved.properties().forEach(e -> out.put(e.getKey(), e.getValue().asText("")));
-        return out;
-    }
-
-    private Map<String, Object> parseApiGatewayV2Cors(JsonNode corsNode, CloudFormationTemplateEngine engine) {
-        if (corsNode == null || corsNode.isNull()) {
-            return null;
-        }
-        JsonNode resolved = engine.resolveNode(corsNode);
-        if (!resolved.isObject()) {
-            return null;
-        }
-        Map<String, Object> out = new HashMap<>();
-        resolved.properties().forEach(e -> {
-            String key = e.getKey();
-            String camel = key.isEmpty() || !Character.isUpperCase(key.charAt(0))
-                    ? key
-                    : Character.toLowerCase(key.charAt(0)) + key.substring(1);
-            JsonNode v = e.getValue();
-            if (v.isArray()) {
-                List<String> list = new ArrayList<>();
-                v.forEach(item -> list.add(item.asText()));
-                out.put(camel, list);
-            } else if (v.isBoolean()) {
-                out.put(camel, v.booleanValue());
-            } else if (v.isNumber()) {
-                out.put(camel, v.numberValue());
-            } else if (!v.isNull()) {
-                out.put(camel, v.asText());
-            }
-        });
-        return out;
-    }
-
-    /**
-     * Resolves {@code IdentitySource} accepting either the documented array form or a single
-     * scalar string — {@code ApiGatewayV2Service.createAuthorizer}/{@code updateAuthorizer}
-     * already accept both ({@code identitySourceRaw instanceof String}), so the CFN provisioner
-     * should not be stricter than the service it calls.
-     */
-    private List<String> resolveIdentitySource(JsonNode props, String source, CloudFormationTemplateEngine engine) {
-        if (props == null || !props.has(source) || props.get(source).isNull()) {
-            return List.of();
-        }
-        JsonNode resolved = engine.resolveNode(props.get(source));
-        if (resolved == null) {
-            return List.of();
-        }
-        if (resolved.isTextual()) {
-            return List.of(resolved.asText());
-        }
-        if (!resolved.isArray()) {
-            return List.of();
-        }
-        List<String> values = new ArrayList<>();
-        resolved.forEach(v -> values.add(v.asText()));
-        return values;
-    }
-
-    private void provisionApiGatewayV2Authorizer(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                                 String region) {
-        String apiId = resolveOptional(props, "ApiId", engine);
-        Map<String, Object> req = new HashMap<>();
-        req.put("name", resolveOptional(props, "Name", engine));
-        req.put("authorizerType", resolveOptional(props, "AuthorizerType", engine));
-        req.put("identitySource", resolveIdentitySource(props, "IdentitySource", engine));
-        req.put("authorizerUri", resolveOptional(props, "AuthorizerUri", engine));
-        req.put("authorizerPayloadFormatVersion", resolveOptional(props, "AuthorizerPayloadFormatVersion", engine));
-
-        String ttl = resolveOptional(props, "AuthorizerResultTtlInSeconds", engine);
-        if (ttl != null) {
-            req.put("authorizerResultTtlInSeconds", Integer.parseInt(ttl));
-        }
-        String simpleResponses = resolveOptional(props, "EnableSimpleResponses", engine);
-        if (simpleResponses != null) {
-            req.put("enableSimpleResponses", simpleResponses);
-        }
-
-        JsonNode jwtConfigNode = props != null ? props.get("JwtConfiguration") : null;
-        if (jwtConfigNode != null && !jwtConfigNode.isNull()) {
-            Map<String, Object> jwtConfig = new HashMap<>();
-            jwtConfig.put("audience", resolveStringListOrEmpty(jwtConfigNode, "Audience", engine));
-            jwtConfig.put("issuer", resolveOptional(jwtConfigNode, "Issuer", engine));
-            req.put("jwtConfiguration", jwtConfig);
-        }
-
-        Authorizer authorizer;
-        if (r.getPhysicalId() == null) {
-            authorizer = apiGatewayV2Service.createAuthorizer(region, apiId, req);
-        } else {
-            authorizer = apiGatewayV2Service.updateAuthorizer(region, apiId, r.getPhysicalId(), req);
-        }
-        r.setPhysicalId(authorizer.getAuthorizerId());
-        r.getAttributes().put("AuthorizerId", authorizer.getAuthorizerId());
-        // ApiId is needed by delete(StackResource, region) to scope deleteAuthorizer — the
-        // type/physicalId-only delete overload has no apiId to call it with.
-        r.getAttributes().put("ApiId", apiId);
-    }
-
-    private void provisionApiGatewayV2Route(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                            String region) {
-        String apiId = resolveOptional(props, "ApiId", engine);
-        Map<String, Object> req = new HashMap<>();
-        req.put("routeKey", resolveOptional(props, "RouteKey", engine));
-        req.put("authorizationType", resolveOrDefault(props, "AuthorizationType", engine, "NONE"));
-        req.put("authorizerId", resolveOptional(props, "AuthorizerId", engine));
-        // Always present (empty when the property is absent) so an UpdateStack that removes
-        // AuthorizationScopes from the template clears the route's scopes instead of keeping them.
-        req.put("authorizationScopes", resolveStringListOrEmpty(props, "AuthorizationScopes", engine));
-        req.put("target", resolveOptional(props, "Target", engine));
-
-        Route route;
-        if (r.getPhysicalId() == null) {
-            route = apiGatewayV2Service.createRoute(region, apiId, req);
-        } else {
-            route = apiGatewayV2Service.updateRoute(region, apiId, r.getPhysicalId(), req);
-        }
-        r.setPhysicalId(route.getRouteId());
-    }
-
-    private void provisionApiGatewayV2Integration(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                                  String region) {
-        String apiId = resolveOptional(props, "ApiId", engine);
-        Map<String, Object> req = new HashMap<>();
-        req.put("integrationType", resolveOptional(props, "IntegrationType", engine));
-        req.put("integrationUri", resolveOptional(props, "IntegrationUri", engine));
-        req.put("payloadFormatVersion", resolveOrDefault(props, "PayloadFormatVersion", engine, "2.0"));
-
-        Integration integration;
-        if (r.getPhysicalId() == null) {
-            integration = apiGatewayV2Service.createIntegration(region, apiId, req);
-        } else {
-            integration = apiGatewayV2Service.updateIntegration(region, apiId, r.getPhysicalId(), req);
-        }
-        r.setPhysicalId(integration.getIntegrationId());
-    }
-
-    private void provisionApiGatewayV2Stage(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                            String region) {
-        String apiId = resolveOptional(props, "ApiId", engine);
-        String stageName = resolveOptional(props, "StageName", engine);
-
-        Map<String, Object> req = new HashMap<>();
-        req.put("stageName", stageName);
-        req.put("autoDeploy", resolveOrDefault(props, "AutoDeploy", engine, "false"));
-        putResolvedMapIfPresent(req, props, "StageVariables", "stageVariables", engine);
-
-        if (r.getPhysicalId() == null) {
-            apiGatewayV2Service.createStage(region, apiId, req);
-            r.setPhysicalId(stageName);
-        } else {
-            apiGatewayV2Service.updateStage(region, apiId, r.getPhysicalId(), req);
-        }
-    }
-
-    private void provisionApiGatewayV2Deployment(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                                 String region) {
-        // Deployments are immutable point-in-time snapshots; on redeploy keep the existing one
-        // rather than minting a duplicate (idempotent re-deploy).
-        if (r.getPhysicalId() != null) {
-            return;
-        }
-        String apiId = resolveOptional(props, "ApiId", engine);
-        Map<String, Object> req = new HashMap<>();
-        req.put("description", resolveOptional(props, "Description", engine));
-
-        Deployment deployment = apiGatewayV2Service.createDeployment(region, apiId, req);
-        r.setPhysicalId(deployment.getDeploymentId());
+        // Extracted provisioners that track their own generated sub-resources (ApiGatewayV2's Api
+        // body routes/integrations/authorizers) carry that tracking forward themselves.
+        resourceRegistry.forType(previous.getResourceType())
+                .ifPresent(owner -> owner.mergeFailedUpdateResourceTracking(previous, attempted));
     }
 
     // ── Lambda LayerVersion ──────────────────────────────────────────────────

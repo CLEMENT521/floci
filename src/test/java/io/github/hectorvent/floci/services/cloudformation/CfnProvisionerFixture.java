@@ -34,6 +34,7 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.ApiGatewa
 import io.github.hectorvent.floci.services.cloudformation.provisioners.ApiGatewayDomainCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.ApiGatewayGatewayResponseCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.ApiGatewayRestApiCfnProvisioner;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.ApiGatewayV2CfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.AutoScalingGroupCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.AutoScalingLifecycleHookCfnProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.AutoScalingScalingPolicyCfnProvisioner;
@@ -319,6 +320,9 @@ final class CfnProvisionerFixture {
                 discovered.add(new ApiGatewayDomainCfnProvisioner(apiGatewayService));
                 discovered.add(new ApiGatewayGatewayResponseCfnProvisioner(apiGatewayService));
                 discovered.add(new ApiGatewayRestApiCfnProvisioner(apiGatewayService, s3Service, objectMapper));
+            }
+            if (apiGatewayV2Service != null) {
+                discovered.add(new ApiGatewayV2CfnProvisioner(apiGatewayV2Service, s3Service, objectMapper));
             }
             if (autoScalingService != null) {
                 discovered.add(new AutoScalingGroupCfnProvisioner(autoScalingService));
@@ -700,7 +704,6 @@ final class CfnProvisionerFixture {
                     s3Service,
                     lambdaService,
                     iamService,
-                    apiGatewayV2Service,
                     lambdaLayerService,
                     objectMapper,
                     customResourceResponseStore,
