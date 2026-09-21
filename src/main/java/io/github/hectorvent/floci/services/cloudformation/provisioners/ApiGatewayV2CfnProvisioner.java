@@ -748,7 +748,12 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
 
         String ttl = ctx.resolveOptional(props, "AuthorizerResultTtlInSeconds");
         if (ttl != null) {
-            req.put("authorizerResultTtlInSeconds", Integer.parseInt(ttl));
+            try {
+                req.put("authorizerResultTtlInSeconds", Integer.parseInt(ttl));
+            } catch (NumberFormatException ignored) {
+                throw new AwsException("ValidationError",
+                        "AuthorizerResultTtlInSeconds must be an integer", 400);
+            }
         }
         String simpleResponses = ctx.resolveOptional(props, "EnableSimpleResponses");
         if (simpleResponses != null) {

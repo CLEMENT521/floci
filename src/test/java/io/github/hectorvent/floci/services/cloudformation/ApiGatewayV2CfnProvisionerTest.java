@@ -67,6 +67,21 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
+    void authorizerWithNonNumericTtlIsRejected() throws Exception {
+        StackResource authorizer = provisioner.provision("MyAuth", "AWS::ApiGatewayV2::Authorizer",
+                mapper.readTree("""
+                        {"ApiId": "api-123",
+                         "IdentitySource": ["$request.header.Authorization"],
+                         "AuthorizerResultTtlInSeconds": "not-a-number"}
+                        """),
+                engine(), REGION, "000000000000", "test-stack", null, Map.of());
+
+        assertEquals("CREATE_FAILED", authorizer.getStatus());
+        assertTrue(authorizer.getStatusReason().contains("AuthorizerResultTtlInSeconds must be an integer"),
+                authorizer.getStatusReason());
+    }
+
+    @Test
     void restoresExistingRoutesAndCleansPartialReplacementWhenRouteCreationFails() throws Exception {
         Route oldRoute = route("old-route", "GET /before");
         when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
