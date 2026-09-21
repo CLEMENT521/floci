@@ -803,6 +803,15 @@ public interface EmulatorConfig {
     interface CodeArtifactServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /** When set, Floci uses this URL and skips Reposilite sidecar container management. */
+        Optional<String> mavenUrl();
+
+        /** {@code name:secret} access token for a pre-configured {@link #mavenUrl()}. */
+        Optional<String> mavenToken();
+
+        @WithDefault("dzikoysk/reposilite:3.6.3")
+        String mavenImage();
     }
 
     interface ConnectServiceConfig {
