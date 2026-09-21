@@ -16,12 +16,12 @@ import java.util.Set;
  * CloudFormation provisioning for {@code AWS::IAM::AccessKey}. {@code Ref} returns the access key
  * id, and {@code Fn::GetAtt} exposes the same id plus the one-time {@code SecretAccessKey}.
  *
- * <p>{@code UserName} and {@code Serial} are the only inputs and both are createOnly. An update that
- * changes neither reuses the existing key rather than minting another one, since a user is capped at
- * two keys and recreating on every update would fail with {@code LimitExceeded} and orphan the
- * earlier keys. A change to either replaces the key (AWS rotates a key by incrementing {@code
- * Serial}): a new key is created and the displaced one is deleted once the update commits, through
- * {@link ReplacementCleanup}.
+ * <p>{@code UserName} and {@code Serial} are createOnly. An update that changes neither reuses the
+ * existing key rather than minting another one, since a user is capped at two keys and recreating on
+ * every update would fail with {@code LimitExceeded} and orphan the earlier keys. A change to either
+ * replaces the key (AWS rotates a key by incrementing {@code Serial}): a new key is created and the
+ * displaced one is deleted once the update commits, through {@link ReplacementCleanup}. {@code Status}
+ * (Active/Inactive) is a mutable property, applied to the key in place and reconciled on a reuse.
  */
 @ApplicationScoped
 public class IamAccessKeyCfnProvisioner implements CfnResourceProvisioner {
@@ -48,10 +48,24 @@ public class IamAccessKeyCfnProvisioner implements CfnResourceProvisioner {
             throw new AwsException("ValidationError", "AWS::IAM::AccessKey requires a UserName.", 400);
         }
         String serial = serialOf(props, ctx);
+        // Status (Active/Inactive) is a mutable property. Validate it up front, before any key is
+        // created, so a bad value fails cleanly: a user is capped at two keys, so creating one and
+        // only then rejecting the status could orphan it.
+        String status = ctx.resolveOptional(props, "Status");
+        if (status != null && !"Active".equals(status) && !"Inactive".equals(status)) {
+            throw new AwsException("ValidationError",
+                    "AWS::IAM::AccessKey Status must be Active or Inactive.", 400);
+        }
 
         Map<String, String> attributesBefore = new HashMap<>(r.getAttributes());
         if (ctx.isUpdate() && !createOnlyChanged(r, ctx, userName, serial)) {
-            // Neither UserName nor Serial changed: keep the existing key and its id and secret.
+            // Neither UserName nor Serial changed: keep the existing key and its id and secret. Only
+            // reconcile Status when the template declares it; an update that omits it leaves the key
+            // as-is, the way AWS applies only the properties the template changed (so a key
+            // deactivated out of band is not silently reactivated by an unrelated update).
+            if (status != null) {
+                iamService.updateAccessKey(userName, ctx.priorPhysicalId(), status);
+            }
             ReplacementCleanup.record(r, ctx, attributesBefore);
             return;
         }
@@ -61,6 +75,10 @@ public class IamAccessKeyCfnProvisioner implements CfnResourceProvisioner {
         r.getAttributes().put("Id", key.getAccessKeyId());
         r.getAttributes().put("SecretAccessKey", key.getSecretAccessKey());
         r.getAttributes().put(SERIAL_ATTR, serial);
+        // A new key is Active; only touch it when the template asked for Inactive.
+        if ("Inactive".equals(status)) {
+            iamService.updateAccessKey(userName, key.getAccessKeyId(), status);
+        }
         // On a createOnly change this new key replaced the prior one; record it so the displaced
         // key is deleted after the update commits, and rolled back to if a later resource fails.
         ReplacementCleanup.record(r, ctx, attributesBefore);

@@ -79,6 +79,54 @@ class IamAccessKeyCfnProvisionerTest {
     }
 
     @Test
+    void createWithInactiveStatusDeactivatesTheKey() throws Exception {
+        AccessKey key = new AccessKey();
+        key.setAccessKeyId("AKIA1");
+        key.setSecretAccessKey("secret-1");
+        when(iam.createAccessKey("alice")).thenReturn(key);
+
+        provisioner.provision(resource(), props("{\"UserName\": \"alice\", \"Status\": \"Inactive\"}"), ctx(null));
+
+        verify(iam).createAccessKey("alice");
+        verify(iam).updateAccessKey("alice", "AKIA1", "Inactive");
+    }
+
+    @Test
+    void anUnchangedUpdateReconcilesStatus() throws Exception {
+        StackResource r = resource();
+        r.setPhysicalId("AKIA1");
+        r.getAttributes().put(SERIAL_ATTR, "");
+        when(iam.findUserNameByAccessKeyId("AKIA1")).thenReturn(Optional.of("alice"));
+
+        provisioner.provision(r, props("{\"UserName\": \"alice\", \"Status\": \"Inactive\"}"), ctx("AKIA1"));
+
+        verify(iam, never()).createAccessKey(anyString());
+        verify(iam).updateAccessKey("alice", "AKIA1", "Inactive");
+    }
+
+    @Test
+    void anUpdateThatOmitsStatusLeavesItAlone() throws Exception {
+        StackResource r = resource();
+        r.setPhysicalId("AKIA1");
+        r.getAttributes().put(SERIAL_ATTR, "");
+        when(iam.findUserNameByAccessKeyId("AKIA1")).thenReturn(Optional.of("alice"));
+
+        provisioner.provision(r, props("{\"UserName\": \"alice\"}"), ctx("AKIA1"));
+
+        verify(iam, never()).createAccessKey(anyString());
+        verify(iam, never()).updateAccessKey(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void aBogusStatusIsRejectedBeforeCreatingAKey() {
+        AwsException e = assertThrows(AwsException.class, () -> provisioner.provision(
+                resource(), props("{\"UserName\": \"alice\", \"Status\": \"Bogus\"}"), ctx(null)));
+
+        assertEquals("ValidationError", e.getErrorCode());
+        verify(iam, never()).createAccessKey(anyString());
+    }
+
+    @Test
     void bumpingSerialOnUpdateRotatesTheKey() throws Exception {
         StackResource r = resource();
         r.setPhysicalId("AKIA1");
