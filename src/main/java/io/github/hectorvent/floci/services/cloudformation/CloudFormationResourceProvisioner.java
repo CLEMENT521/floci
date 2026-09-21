@@ -1,6 +1,5 @@
 package io.github.hectorvent.floci.services.cloudformation;
 
-import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.cloudformation.model.StackEvent;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.OpenApiDocuments;
@@ -12,28 +11,18 @@ import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnDynami
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnResourceProvisioner;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.UpdateCleanupResult;
 import io.github.hectorvent.floci.services.eventbridge.model.Target;
-import io.github.hectorvent.floci.services.iam.IamService;
-import io.github.hectorvent.floci.services.iam.model.IamRole;
-import io.github.hectorvent.floci.services.lambda.LambdaService;
 import io.github.hectorvent.floci.services.pipes.model.DesiredState;
 import io.github.hectorvent.floci.services.ssm.model.Parameter;
 import io.github.hectorvent.floci.services.apigatewayv2.model.*;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
-import io.github.hectorvent.floci.core.common.docker.ContainerReachableEndpoint;
-import io.github.hectorvent.floci.services.lambda.model.InvocationType;
-import io.github.hectorvent.floci.services.lambda.model.InvokeResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -49,67 +38,39 @@ public class CloudFormationResourceProvisioner {
     private static final int GENERATED_NAME_SUFFIX_LENGTH = 12;
 
     /**
-     * Types whose delete needs the whole {@link StackResource} — a create-time attribute (the
-     * rule's event bus, the authorizer's api id, the nodegroup's cluster) or the stashed
-     * custom-resource properties. Deleting one of these from type and physical id alone silently
-     * no-ops and leaves the resource live, so they route through
-     * {@link #deleteUsingCreateTimeAttributes} instead.
-     *
-     * <p>Gates that method, so the set cannot drift from its branches. When one of these types
-     * moves to a per-service provisioner, its logic moves into that provisioner's
-     * {@code delete(StackResource, String)} override and its entry leaves this set;
-     * {@code CfnDeletePrecedenceTest} fails while both claim it.
+     * Types whose delete needs the whole {@link StackResource}, not just its physical id, because a
+     * create-time attribute or stashed state identifies what to remove. Now empty: every such type
+     * moved to a per-service provisioner that overrides {@code delete(StackResource, String)}. Kept
+     * as the gate {@code CfnDeletePrecedenceTest} checks, which fails if a type is ever both listed
+     * here and served by the registry.
      */
-    static final Set<String> DELETE_NEEDS_STACK_RESOURCE = Set.of(
-            "AWS::CloudFormation::CustomResource");
+    static final Set<String> DELETE_NEEDS_STACK_RESOURCE = Set.of();
 
     /**
-     * Every resource type the switch in {@link #provision} still serves. Load-bearing: the
-     * default arm throws for a member of this set, so deleting an arm during the migration to
-     * per-service provisioners without deleting its entry here fails loudly instead of
-     * silently stubbing the resource. Kept in step with the registry by
-     * {@code CfnResourceInventoryTest}.
+     * Resource types still served by the switch in {@link #provision} rather than the registry. Now
+     * empty: every type moved to a per-service provisioner. Kept as the guard that fails loudly,
+     * rather than silently stubbing, if an arm is ever removed without clearing its entry, and kept
+     * in step with the registry by {@code CfnResourceInventoryTest}.
      */
-    static final Set<String> LEGACY_SWITCH_TYPES = Set.of(
-            "AWS::CloudFormation::CustomResource");
+    static final Set<String> LEGACY_SWITCH_TYPES = Set.of();
 
-    /** Reserved attribute keys used to carry custom-resource state to the later Delete invocation. */
-    private static final String CR_SERVICE_TOKEN_ATTR = "__FlociServiceToken";
-    private static final String CR_PROPERTIES_ATTR = "__FlociResourceProperties";
-    /**
-     * How long to wait for the Lambda's ResponseURL callback after the synchronous invoke returns.
-     * The invoke already blocks until the handler finishes, so this only covers a PUT that lands
-     * fractionally after the container returns control.
-     */
-    private static final Duration CR_RESPONSE_TIMEOUT = Duration.ofSeconds(10);
 
-    private final LambdaService lambdaService;
-    private final IamService iamService;
     private final ObjectMapper objectMapper;
-    private final CustomResourceResponseStore customResourceResponseStore;
-    private final ContainerReachableEndpoint reachableEndpoint;
-    // Item 15 decomposition: extracted per-service provisioners are consulted before the switch
-    // below. As types migrate, their switch cases and provisionXxx methods are removed here; the
-    // now-dead service deps above are cleared in the final cleanup once the switch is empty.
+    // Item 15 decomposition: every resource type now has a per-service provisioner reached through
+    // the registry, so the switch below serves no type and only stubs or rejects the unknown. The
+    // last type-specific service deps left with the types they served; what remains is what the
+    // dispatch itself needs.
     private final CloudFormationResourceRegistry resourceRegistry;
     private final CfnDynamicReferences dynamicReferences;
     private final EmulatorConfig config;
 
     @Inject
-    public CloudFormationResourceProvisioner(LambdaService lambdaService,
-                                             IamService iamService,
-                                             ObjectMapper objectMapper,
-                                             CustomResourceResponseStore customResourceResponseStore,
-                                             ContainerReachableEndpoint reachableEndpoint,
+    public CloudFormationResourceProvisioner(ObjectMapper objectMapper,
                                              CloudFormationResourceRegistry resourceRegistry,
                                              CfnDynamicReferences dynamicReferences,
                                              EmulatorConfig config) {
         this.config = config;
-        this.lambdaService = lambdaService;
-        this.iamService = iamService;
         this.objectMapper = objectMapper;
-        this.customResourceResponseStore = customResourceResponseStore;
-        this.reachableEndpoint = reachableEndpoint;
         this.resourceRegistry = resourceRegistry;
         this.dynamicReferences = dynamicReferences;
     }
@@ -163,12 +124,8 @@ public class CloudFormationResourceProvisioner {
                 return resource;
             }
             switch (resourceType) {
-                case "AWS::CloudFormation::CustomResource" ->
-                        provisionCustomResource(resource, properties, engine, region, accountId, stackName);
                 default -> {
-                    if (resourceType != null && resourceType.startsWith("Custom::")) {
-                        provisionCustomResource(resource, properties, engine, region, accountId, stackName);
-                    } else if (LEGACY_SWITCH_TYPES.contains(resourceType)) {
+                    if (LEGACY_SWITCH_TYPES.contains(resourceType)) {
                         // A declared legacy type reaching the default arm means its case was removed
                         // without removing its LEGACY_SWITCH_TYPES entry (or without registering a
                         // provisioner). Stubbing it would report CREATE_COMPLETE with a fake ARN and
@@ -284,32 +241,7 @@ public class CloudFormationResourceProvisioner {
             extractedForDelete.delete(resource, region);
             return;
         }
-        if (DELETE_NEEDS_STACK_RESOURCE.contains(resourceType)) {
-            deleteUsingCreateTimeAttributes(resource, region);
-            return;
-        }
-        if (resourceType != null && resourceType.startsWith("Custom::")) {
-            deleteCustomResource(resource, region);
-            return;
-        }
         delete(resourceType, resource.getPhysicalId(), region);
-    }
-
-    /**
-     * Deletes one of the {@link #DELETE_NEEDS_STACK_RESOURCE} types, whose delete needs state the
-     * type/physicalId path cannot supply — a create-time attribute, or the stashed custom-resource
-     * properties. Reached only through that set, so the set and these branches stay in step: a
-     * listed type with no branch throws rather than silently no-opping.
-     */
-    private void deleteUsingCreateTimeAttributes(StackResource resource, String region) {
-        String resourceType = resource.getResourceType();
-        if ("AWS::CloudFormation::CustomResource".equals(resourceType)) {
-            deleteCustomResource(resource, region);
-            return;
-        }
-        throw new IllegalStateException("DELETE_NEEDS_STACK_RESOURCE lists " + resourceType
-                + " but no branch here deletes it — deleting it by physical id alone would "
-                + "silently no-op and leave the resource live.");
     }
 
     /**
@@ -432,207 +364,6 @@ public class CloudFormationResourceProvisioner {
         // body routes/integrations/authorizers) carry that tracking forward themselves.
         resourceRegistry.forType(previous.getResourceType())
                 .ifPresent(owner -> owner.mergeFailedUpdateResourceTracking(previous, attempted));
-    }
-
-    // ── CloudFormation Custom Resources ──────────────────────────────────────
-    //
-    // A Custom::* / AWS::CloudFormation::CustomResource is backed by a Lambda named by its
-    // ServiceToken. CloudFormation invokes that Lambda with a request event and the Lambda PUTs its
-    // result to the event's ResponseURL (it does NOT return it). Floci points ResponseURL at
-    // CfnResponseController and, because the invoke is synchronous, reads the captured response as
-    // soon as the handler returns. Pattern 1 only — single-Lambda synchronous handlers (e.g. CDK
-    // BucketDeployment). The async Provider framework (onEvent/isComplete polling) is not emulated.
-
-    private void provisionCustomResource(StackResource r, JsonNode props, CloudFormationTemplateEngine engine,
-                                         String region, String accountId, String stackName) {
-        if (props == null || !props.has("ServiceToken")) {
-            throw new AwsException("ValidationError",
-                    "Custom resource " + r.getLogicalId() + " is missing ServiceToken", 400);
-        }
-        String serviceToken = engine.resolve(props.get("ServiceToken"));
-        if (serviceToken == null || serviceToken.isBlank()) {
-            throw new AwsException("ValidationError",
-                    "Custom resource " + r.getLogicalId() + " has an unresolved ServiceToken", 400);
-        }
-
-        // Resolve intrinsics to concrete values. CloudFormation keeps ServiceToken inside
-        // ResourceProperties (and also surfaces it at the top level of the event), so we leave it
-        // in place here. CloudFormation stringifies every scalar in ResourceProperties
-        // (true -> "true", 5 -> "5") while preserving list/map structure; handlers (e.g. CDK's)
-        // rely on this and call String methods on the values, so we must match it.
-        JsonNode resolvedProps = engine.resolveNode(props);
-        ObjectNode resolved = resolvedProps.isObject()
-                ? ((ObjectNode) resolvedProps).deepCopy()
-                : objectMapper.createObjectNode();
-        ObjectNode resourceProperties = (ObjectNode) stringifyScalars(resolved);
-
-        boolean isUpdate = r.getPhysicalId() != null;
-        String requestType = isUpdate ? "Update" : "Create";
-        String priorPhysicalId = isUpdate ? r.getPhysicalId() : null;
-
-        // On Update, CloudFormation includes the previous ResourceProperties so the handler can diff.
-        // The prior values were stashed at the last create/update; read them before we overwrite below.
-        ObjectNode oldResourceProperties = isUpdate ? readStashedProperties(r) : null;
-
-        // CloudFormation invokes a custom resource's Update handler only when its resolved
-        // properties changed (UserGuide/template-custom-resources-sns.md: "During a stack update,
-        // if no changes are made to a custom resource, CloudFormation will not send any requests
-        // to it."). Replaying every custom resource during an unrelated stack update can repeat
-        // non-idempotent side effects. The prior resolved properties are already stashed on the
-        // resource, so an exact match is a safe no-op that preserves physical ID and attributes.
-        if (oldResourceProperties != null && oldResourceProperties.equals(resourceProperties)) {
-            return;
-        }
-
-        JsonNode response = invokeCustomResourceHandler(serviceToken, requestType, r.getLogicalId(),
-                r.getResourceType(), priorPhysicalId, resourceProperties, oldResourceProperties,
-                region, accountId, stackName);
-
-        String status = response.path("Status").asText("FAILED");
-        if (!"SUCCESS".equals(status)) {
-            throw new AwsException("CustomResourceFailed",
-                    "Custom resource handler reported FAILED: "
-                            + response.path("Reason").asText("(no reason given)"), 400);
-        }
-
-        String returnedPhysicalId = response.path("PhysicalResourceId").asText(null);
-        if (returnedPhysicalId != null && !returnedPhysicalId.isBlank()) {
-            r.setPhysicalId(returnedPhysicalId);
-        } else if (priorPhysicalId != null) {
-            r.setPhysicalId(priorPhysicalId);
-        } else {
-            r.setPhysicalId(r.getLogicalId() + "-" + UUID.randomUUID().toString().substring(0, 12));
-        }
-
-        // Data.* become Fn::GetAtt attributes on the custom resource.
-        JsonNode data = response.path("Data");
-        if (data.isObject()) {
-            data.fields().forEachRemaining(e ->
-                    r.getAttributes().put(e.getKey(), nodeToAttributeValue(e.getValue())));
-        }
-
-        // Stash what a later Delete invocation needs (delete() only gets the StackResource).
-        r.getAttributes().put(CR_SERVICE_TOKEN_ATTR, serviceToken);
-        r.getAttributes().put(CR_PROPERTIES_ATTR, resourceProperties.toString());
-    }
-
-    private void deleteCustomResource(StackResource r, String region) {
-        String serviceToken = r.getAttributes().get(CR_SERVICE_TOKEN_ATTR);
-        if (serviceToken == null || serviceToken.isBlank()) {
-            LOG.debugv("Custom resource {0} has no stored ServiceToken; skipping Delete", r.getLogicalId());
-            return;
-        }
-        ObjectNode stashed = readStashedProperties(r);
-        ObjectNode resourceProperties = stashed != null ? stashed : objectMapper.createObjectNode();
-        try {
-            JsonNode response = invokeCustomResourceHandler(serviceToken, "Delete", r.getLogicalId(),
-                    r.getResourceType(), r.getPhysicalId(), resourceProperties, null, region,
-                    accountFromArn(serviceToken), "");
-            if (!"SUCCESS".equals(response.path("Status").asText("FAILED"))) {
-                LOG.warnv("Custom resource {0} Delete reported FAILED: {1}",
-                        r.getLogicalId(), response.path("Reason").asText("(no reason given)"));
-            }
-        } catch (Exception e) {
-            // Best-effort, consistent with the rest of delete().
-            LOG.debugv("Custom resource {0} Delete invocation failed: {1}", r.getLogicalId(), e.getMessage());
-        }
-    }
-
-    // Reads the ResourceProperties stashed at the last create/update (CR_PROPERTIES_ATTR).
-    // Returns null when nothing is stashed or it cannot be parsed.
-    private ObjectNode readStashedProperties(StackResource r) {
-        String stored = r.getAttributes().get(CR_PROPERTIES_ATTR);
-        if (stored == null) {
-            return null;
-        }
-        try {
-            JsonNode parsed = objectMapper.readTree(stored);
-            return parsed.isObject() ? (ObjectNode) parsed : null;
-        } catch (Exception e) {
-            LOG.debugv("Could not parse stored properties for custom resource {0}: {1}",
-                    r.getLogicalId(), e.getMessage());
-            return null;
-        }
-    }
-
-    private JsonNode invokeCustomResourceHandler(String serviceToken, String requestType, String logicalId,
-                                                 String resourceType, String physicalId,
-                                                 ObjectNode resourceProperties, ObjectNode oldResourceProperties,
-                                                 String region, String accountId, String stackName) {
-        String token = customResourceResponseStore.register();
-        try {
-            ObjectNode event = objectMapper.createObjectNode();
-            event.put("RequestType", requestType);
-            event.put("ResponseURL", reachableEndpoint.baseUrl() + "/cfn-response/" + token);
-            event.put("StackId", AwsArnUtils.Arn.of("cloudformation", region, accountId, "stack/"
-                    + (stackName == null ? "" : stackName) + "/" + UUID.randomUUID()).toString());
-            event.put("RequestId", UUID.randomUUID().toString());
-            event.put("ResourceType", resourceType);
-            event.put("LogicalResourceId", logicalId);
-            if (physicalId != null) {
-                event.put("PhysicalResourceId", physicalId);
-            }
-            event.put("ServiceToken", serviceToken);
-            event.set("ResourceProperties", resourceProperties);
-            if (oldResourceProperties != null) {
-                event.set("OldResourceProperties", oldResourceProperties);
-            }
-
-            byte[] payload = objectMapper.writeValueAsBytes(event);
-            InvokeResult result = lambdaService.invoke(region, serviceToken, payload,
-                    InvocationType.RequestResponse);
-            if (result.getFunctionError() != null) {
-                String body = result.getPayload() != null
-                        ? new String(result.getPayload(), StandardCharsets.UTF_8) : "";
-                throw new AwsException("CustomResourceFailed",
-                        "Custom resource handler errored (" + result.getFunctionError() + "): " + body, 400);
-            }
-
-            return customResourceResponseStore.await(token, CR_RESPONSE_TIMEOUT, serviceToken, region);
-        } catch (AwsException e) {
-            throw e;
-        } catch (TimeoutException e) {
-            throw new AwsException("CustomResourceTimeout",
-                    "Timed out waiting for custom resource " + logicalId
-                            + " to PUT its response to ResponseURL: " + e.getMessage(), 504);
-        } catch (Exception e) {
-            throw new AwsException("CustomResourceFailed",
-                    "Failed to invoke custom resource " + logicalId + ": " + e.getMessage(), 500);
-        }
-    }
-
-    private static String nodeToAttributeValue(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return "";
-        }
-        return node.isValueNode() ? node.asText() : node.toString();
-    }
-
-    /**
-     * Mirrors CloudFormation's stringification of custom-resource ResourceProperties: every scalar
-     * (boolean, number, text) becomes a string, while object and array structure is preserved.
-     * Null is left as-is.
-     */
-    private JsonNode stringifyScalars(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return node;
-        }
-        if (node.isObject()) {
-            ObjectNode out = objectMapper.createObjectNode();
-            node.fields().forEachRemaining(e -> out.set(e.getKey(), stringifyScalars(e.getValue())));
-            return out;
-        }
-        if (node.isArray()) {
-            var out = objectMapper.createArrayNode();
-            node.forEach(e -> out.add(stringifyScalars(e)));
-            return out;
-        }
-        return objectMapper.getNodeFactory().textNode(node.asText());
-    }
-
-    private static String accountFromArn(String arn) {
-        String account = AwsArnUtils.accountOrDefault(arn, "000000000000");
-        return account.matches("\\d{12}") ? account : "000000000000";
     }
 
     private static String textOrNull(JsonNode node, String field) {
