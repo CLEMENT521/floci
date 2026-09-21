@@ -65,9 +65,25 @@ public class IamPolicyCfnProvisioner implements CfnResourceProvisioner {
         boolean legacyManagedPolicy = isIamManagedPolicyArn(previousPolicyName);
         String policyName = ctx.resolveOptional(props, "PolicyName");
         if (policyName == null || policyName.isBlank()) {
-            policyName = previousPolicyName != null && !previousPolicyName.isBlank() && !legacyManagedPolicy
-                    ? previousPolicyName
-                    : ctx.generatePhysicalName(r.getLogicalId(), 128, false);
+            // PolicyName is required for AWS::IAM::Policy (registry required set, and PutRolePolicy
+            // demands it). A genuine first create has nothing to fall back to, so reject rather than
+            // invent a name. An update keeps its prior: a normal one reuses the recorded name, and a
+            // legacy managed-policy migration generates a fresh inline name because the prior id is
+            // an ARN, not a usable policy name.
+            if (previousPolicyName == null || previousPolicyName.isBlank()) {
+                throw new AwsException("ValidationError",
+                        "AWS::IAM::Policy " + r.getLogicalId() + " is missing the required PolicyName property", 400);
+            }
+            policyName = legacyManagedPolicy
+                    ? ctx.generatePhysicalName(r.getLogicalId(), 128, false)
+                    : previousPolicyName;
+        }
+        // An inline policy must attach to at least one principal; AWS rejects a Policy that names
+        // none of Roles, Users or Groups.
+        if (!hasPrincipals(props, "Roles") && !hasPrincipals(props, "Users") && !hasPrincipals(props, "Groups")) {
+            throw new AwsException("ValidationError",
+                    "AWS::IAM::Policy " + r.getLogicalId()
+                            + " must specify at least one of Roles, Users or Groups", 400);
         }
         String document = ctx.resolvePolicyDocument(props);
 
@@ -131,6 +147,11 @@ public class IamPolicyCfnProvisioner implements CfnResourceProvisioner {
                 name -> iamService.deleteUserPolicy(name, policyName));
         detachInline(resource.getAttributes().get("InlineGroupTargets"),
                 name -> iamService.deleteGroupPolicy(name, policyName));
+    }
+
+    private static boolean hasPrincipals(JsonNode props, String propName) {
+        JsonNode node = props == null ? null : props.get(propName);
+        return node != null && node.isArray() && !node.isEmpty();
     }
 
     private void putInlinePolicy(JsonNode props, String propName, CloudFormationTemplateEngine engine,

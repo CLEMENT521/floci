@@ -53,6 +53,24 @@ class IamPolicyCfnProvisionerTest {
     }
 
     @Test
+    void missingPolicyNameOnCreateIsRejected() throws Exception {
+        AwsException e = assertThrows(AwsException.class, () -> provisioner.provision(resource(), props("""
+                {"PolicyDocument": {"Version": "2012-10-17", "Statement": []},
+                 "Roles": ["web-role"]}
+                """), ctx(null)));
+        assertEquals("ValidationError", e.getErrorCode());
+    }
+
+    @Test
+    void aPolicyThatNamesNoPrincipalIsRejected() throws Exception {
+        AwsException e = assertThrows(AwsException.class, () -> provisioner.provision(resource(), props("""
+                {"PolicyName": "app-policy",
+                 "PolicyDocument": {"Version": "2012-10-17", "Statement": []}}
+                """), ctx(null)));
+        assertEquals("ValidationError", e.getErrorCode());
+    }
+
+    @Test
     void updateReusesTheNameAndDetachesAPrincipalNoLongerListed() throws Exception {
         StackResource r = resource();
         r.setPhysicalId("app-policy");
