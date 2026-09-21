@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.restassured.RestAssured.given;
@@ -105,15 +106,15 @@ class SageMakerDockerIntegrationTest {
                   "AlgorithmSpecification":{
                     "TrainingImage":"public.ecr.aws/docker/library/busybox:stable",
                     "ContainerEntrypoint":["/bin/sh","-c"],
-                    "ContainerArguments":["trap 'exit 143' TERM; sleep 60 & wait"]
+                    "ContainerArguments":["trap 'exit 143' TERM; mkfifo /tmp/hold; cat /tmp/hold & wait"]
                   },
                   "OutputDataConfig":{"S3OutputPath":"s3://%s/output"},
                   "ResourceConfig":{"InstanceType":"ml.m5.large","InstanceCount":1,"VolumeSizeInGB":1},
                   "StoppingCondition":{"MaxRuntimeInSeconds":300}
                 }
                 """.formatted(job, bucket)).then().statusCode(200);
-        // Wait for the container to actually be running "sleep 60" so the stop races a real
-        // running container rather than one still being staged.
+        // Wait for the container to actually be running, blocked on an empty pipe, so the stop
+        // races a real running container rather than one still being staged.
         awaitContainerRunning("floci-sagemaker-training-" + job);
         post("SageMaker.StopTrainingJob", "{\"TrainingJobName\":\"%s\"}".formatted(job)).then().statusCode(200);
         post("SageMaker.DescribeTrainingJob", "{\"TrainingJobName\":\"%s\"}".formatted(job))
@@ -132,9 +133,9 @@ class SageMakerDockerIntegrationTest {
         String model = "sm-del-model-" + suffix;
         String cfg = "sm-del-cfg-" + suffix;
         String endpoint = "sm-del-endpoint-" + suffix;
-        // Sleeps before serving so the /ping health check keeps CreateEndpoint's async start
-        // in flight well past DeleteEndpoint returning.
-        String script = "trap 'exit 0' TERM; sleep 5 && cat > /server.py <<'PY'\nfrom http.server import BaseHTTPRequestHandler,HTTPServer\nclass H(BaseHTTPRequestHandler):\n def do_GET(self):\n  self.send_response(200); self.end_headers()\nHTTPServer(('0.0.0.0',8080),H).serve_forever()\nPY\npython /server.py & wait $!";
+        // DeleteEndpoint returns while CreateEndpoint's async start is still bringing the container
+        // up, well before /ping can succeed, so the start it races is always still in flight.
+        String script = "trap 'exit 0' TERM; cat > /server.py <<'PY'\nfrom http.server import BaseHTTPRequestHandler,HTTPServer\nclass H(BaseHTTPRequestHandler):\n def do_GET(self):\n  self.send_response(200); self.end_headers()\nHTTPServer(('0.0.0.0',8080),H).serve_forever()\nPY\npython /server.py & wait $!";
         post("SageMaker.CreateModel", """
                 {"ModelName":"%s","PrimaryContainer":{"Image":"public.ecr.aws/docker/library/python:3-alpine","ContainerEntrypoint":["/bin/sh","-c"],"ContainerArguments":[%s]}}
                 """.formatted(model, json(script))).then().statusCode(200);
@@ -164,26 +165,26 @@ class SageMakerDockerIntegrationTest {
                 !dockerClient.listContainersCmd().withNameFilter(List.of(nameFragment)).exec().isEmpty());
     }
 
-    private void waitForTraining(String job, String status) throws Exception {
-        long deadline = System.currentTimeMillis() + Duration.ofSeconds(120).toMillis();
-        while (System.currentTimeMillis() < deadline) {
-            String current = post("SageMaker.DescribeTrainingJob", "{\"TrainingJobName\":\"%s\"}".formatted(job)).then().statusCode(200).extract().path("TrainingJobStatus");
-            if (status.equals(current)) return;
-            if ("Failed".equals(current)) throw new AssertionError("Training failed");
-            Thread.sleep(1000);
+    private void waitForTraining(String job, String status) {
+        String current = awaitTerminalStatus(status, () -> post("SageMaker.DescribeTrainingJob",
+                "{\"TrainingJobName\":\"%s\"}".formatted(job)).then().statusCode(200).extract().path("TrainingJobStatus"));
+        if ("Failed".equals(current) && !status.equals(current)) {
+            throw new AssertionError("Training failed");
         }
-        throw new AssertionError("Timed out waiting for training job");
     }
 
-    private void waitForEndpoint(String endpoint, String status) throws Exception {
-        long deadline = System.currentTimeMillis() + Duration.ofSeconds(150).toMillis();
-        while (System.currentTimeMillis() < deadline) {
-            String current = post("SageMaker.DescribeEndpoint", "{\"EndpointName\":\"%s\"}".formatted(endpoint)).then().statusCode(200).extract().path("EndpointStatus");
-            if (status.equals(current)) return;
-            if ("Failed".equals(current)) throw new AssertionError("Endpoint failed");
-            Thread.sleep(1000);
+    private void waitForEndpoint(String endpoint, String status) {
+        String current = awaitTerminalStatus(status, () -> post("SageMaker.DescribeEndpoint",
+                "{\"EndpointName\":\"%s\"}".formatted(endpoint)).then().statusCode(200).extract().path("EndpointStatus"));
+        if ("Failed".equals(current) && !status.equals(current)) {
+            throw new AssertionError("Endpoint failed");
         }
-        throw new AssertionError("Timed out waiting for endpoint");
+    }
+
+    /** Polls until the resource reaches the wanted status, or Failed, and returns the status it reached. */
+    private static String awaitTerminalStatus(String wanted, Callable<String> currentStatus) {
+        return await().atMost(Duration.ofSeconds(150)).pollDelay(Duration.ZERO).pollInterval(Duration.ofMillis(100))
+                .until(currentStatus, current -> wanted.equals(current) || "Failed".equals(current));
     }
 
     private io.restassured.response.Response post(String target, String body) {
