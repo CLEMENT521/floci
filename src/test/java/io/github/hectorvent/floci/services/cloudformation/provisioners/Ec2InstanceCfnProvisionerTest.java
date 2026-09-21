@@ -92,6 +92,37 @@ class Ec2InstanceCfnProvisionerTest {
     }
 
     @Test
+    void aLaunchTemplateThatDoesNotResolveFailsTheInstance() throws Exception {
+        when(ec2.resolveLaunchTemplateData("us-east-1", "lt-missing", null, null))
+                .thenThrow(new AwsException("InvalidLaunchTemplateId.NotFound",
+                        "The specified launch template does not exist.", 400));
+
+        AwsException e = assertThrows(AwsException.class, () -> provisioner.provision(resource("Server"), props("""
+                {"LaunchTemplate": {"LaunchTemplateId": "lt-missing"}}
+                """), ctx()));
+
+        assertEquals("InvalidLaunchTemplateId.NotFound", e.getErrorCode());
+    }
+
+    @Test
+    void aLaunchTemplateResolvingToNoValueLaunchesWithoutIt() throws Exception {
+        Instance instance = new Instance();
+        instance.setInstanceId("i-nolt");
+        stubLaunch(instance);
+
+        // An Fn::If selecting AWS::NoValue resolves to an empty node, which on AWS means the property
+        // is absent: the instance launches without a template rather than failing to resolve one.
+        StackResource r = resource("Server");
+        provisioner.provision(r, props("""
+                {"LaunchTemplate": ""}
+                """), ctx());
+
+        assertEquals("i-nolt", r.getPhysicalId());
+        verify(ec2).runInstances(eq("us-east-1"), any(), eq("t3.micro"), eq(1), eq(1), any(),
+                anyList(), any(), any(), anyList(), any(), any(), any());
+    }
+
+    @Test
     void provisionsAnInstanceDeclaredWithNoProperties() {
         Instance instance = new Instance();
         instance.setInstanceId("i-3");

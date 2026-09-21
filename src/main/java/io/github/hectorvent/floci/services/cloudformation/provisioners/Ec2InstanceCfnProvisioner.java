@@ -12,7 +12,6 @@ import io.github.hectorvent.floci.services.ec2.model.Reservation;
 import io.github.hectorvent.floci.services.ec2.model.Tag;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,8 +26,6 @@ import java.util.Set;
  */
 @ApplicationScoped
 public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
-
-    private static final Logger LOG = Logger.getLogger(Ec2InstanceCfnProvisioner.class);
 
     private static final String INSTANCE = "AWS::EC2::Instance";
 
@@ -55,25 +52,25 @@ public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
 
         // An instance may reference a LaunchTemplate for its config; fields the
         // properties don't set resolve from the template's data, as on AWS.
-        if (props != null && props.has("LaunchTemplate")) {
-            JsonNode ltRef = engine.resolveNode(props.get("LaunchTemplate"));
-            try {
-                LaunchTemplateData ltData = ec2Service.resolveLaunchTemplateData(region,
-                        ltRef.path("LaunchTemplateId").asText(null),
-                        ltRef.path("LaunchTemplateName").asText(null),
-                        ltRef.path("Version").asText(null));
-                if (imageId == null || imageId.isBlank()) {
-                    imageId = ltData.getImageId();
-                }
-                if (instanceType == null || instanceType.isBlank()) {
-                    instanceType = ltData.getInstanceType();
-                }
-                if (keyName == null || keyName.isBlank()) {
-                    keyName = ltData.getKeyName();
-                }
-            } catch (Exception e) {
-                LOG.debugv("Could not resolve launch template for instance {0}: {1}",
-                        r.getLogicalId(), e.getMessage());
+        JsonNode ltRef = props != null ? engine.resolveNode(props.get("LaunchTemplate")) : null;
+        String ltId = ltRef != null ? ltRef.path("LaunchTemplateId").asText(null) : null;
+        String ltName = ltRef != null ? ltRef.path("LaunchTemplateName").asText(null) : null;
+        // Only look one up when the property actually names a template. An Fn::If that selects
+        // AWS::NoValue resolves to an empty node here, which on AWS means the property is absent
+        // (launch without a template), so it must not turn into an InvalidLaunchTemplateId.NotFound.
+        if (ltRef != null && ltRef.isObject() && (ltId != null || ltName != null)) {
+            // A LaunchTemplate the stack references but that does not resolve is a real error, as on
+            // AWS: let it fail the resource rather than silently launching with default config.
+            LaunchTemplateData ltData = ec2Service.resolveLaunchTemplateData(region, ltId, ltName,
+                    ltRef.path("Version").asText(null));
+            if (imageId == null || imageId.isBlank()) {
+                imageId = ltData.getImageId();
+            }
+            if (instanceType == null || instanceType.isBlank()) {
+                instanceType = ltData.getInstanceType();
+            }
+            if (keyName == null || keyName.isBlank()) {
+                keyName = ltData.getKeyName();
             }
         }
         if (instanceType == null || instanceType.isBlank()) {
