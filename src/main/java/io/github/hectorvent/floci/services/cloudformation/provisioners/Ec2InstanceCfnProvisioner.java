@@ -16,7 +16,6 @@ import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -89,7 +88,7 @@ public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
         if (prior != null && !createOnlyChanged(prior, imageId, subnetId, keyName)) {
             r.setPhysicalId(prior.getInstanceId());
             publishInstanceAttributes(r, prior);
-            reconcileTags(prior.getInstanceId(), region, props, engine);
+            Ec2Tags.reconcile(ec2Service, region, prior.getInstanceId(), ctx.resolveTags(props, "Tags"));
             ReplacementCleanup.record(r, ctx, attributesBefore);
             return;
         }
@@ -219,40 +218,6 @@ public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
     }
 
     /** Reconciles the instance tags to the template when the instance is kept in place. */
-    private void reconcileTags(String instanceId, String region, JsonNode props,
-                               CloudFormationTemplateEngine engine) {
-        Map<String, String> desired = new LinkedHashMap<>();
-        JsonNode tagsNode = props != null ? engine.resolveNode(props.get("Tags")) : null;
-        if (tagsNode != null && tagsNode.isArray()) {
-            for (JsonNode tag : tagsNode) {
-                String key = engine.resolve(tag.path("Key"));
-                if (key != null && !key.isEmpty()) {
-                    String value = engine.resolve(tag.path("Value"));
-                    desired.put(key, value == null ? "" : value);
-                }
-            }
-        }
-        Map<String, String> current = new LinkedHashMap<>();
-        for (Map<String, String> entry : ec2Service.describeTags(region, Map.of("resource-id", List.of(instanceId)))) {
-            current.put(entry.get("key"), entry.get("value"));
-        }
-        List<String> stale = ProvisionContext.staleTagKeys(current, desired);
-        if (!stale.isEmpty()) {
-            List<Tag> remove = new ArrayList<>();
-            for (String key : stale) {
-                remove.add(new Tag(key, current.get(key)));
-            }
-            ec2Service.deleteTags(region, List.of(instanceId), remove);
-        }
-        if (!desired.isEmpty()) {
-            List<Tag> add = new ArrayList<>();
-            for (Map.Entry<String, String> entry : desired.entrySet()) {
-                add.add(new Tag(entry.getKey(), entry.getValue()));
-            }
-            ec2Service.createTags(region, List.of(instanceId), add);
-        }
-    }
-
     @Override
     public boolean hasReplacementUpdate(StackResource resource) {
         return ReplacementCleanup.hasReplacement(resource);

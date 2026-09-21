@@ -10,7 +10,6 @@ import io.github.hectorvent.floci.services.ec2.model.IpRange;
 import io.github.hectorvent.floci.services.ec2.model.Ipv6Range;
 import io.github.hectorvent.floci.services.ec2.model.PrefixListId;
 import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
-import io.github.hectorvent.floci.services.ec2.model.Tag;
 import io.github.hectorvent.floci.services.ec2.model.UserIdGroupPair;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -18,7 +17,6 @@ import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -104,7 +102,7 @@ public class Ec2SecurityGroupCfnProvisioner implements CfnResourceProvisioner {
                 EGRESS_RULES_ATTR,
                 perms -> ec2Service.authorizeSecurityGroupEgress(region, sg.getGroupId(), perms),
                 perms -> ec2Service.revokeSecurityGroupEgress(region, sg.getGroupId(), perms));
-        reconcileTags(props, sg.getGroupId(), region, ctx);
+        Ec2Tags.reconcile(ec2Service, region, sg.getGroupId(), ctx.resolveTags(props, "Tags"));
     }
 
     @Override
@@ -176,29 +174,6 @@ public class Ec2SecurityGroupCfnProvisioner implements CfnResourceProvisioner {
      * declared tags and removes any the template dropped. AWS treats SecurityGroup Tags as an
      * in-place (no interruption) update.
      */
-    private void reconcileTags(JsonNode props, String groupId, String region, ProvisionContext ctx) {
-        Map<String, String> desired = ctx.resolveTags(props, "Tags");
-        Map<String, String> current = new LinkedHashMap<>();
-        for (Map<String, String> entry : ec2Service.describeTags(region, Map.of("resource-id", List.of(groupId)))) {
-            current.put(entry.get("key"), entry.get("value"));
-        }
-        List<String> stale = ProvisionContext.staleTagKeys(current, desired);
-        if (!stale.isEmpty()) {
-            List<Tag> remove = new ArrayList<>();
-            for (String key : stale) {
-                remove.add(new Tag(key, current.get(key)));
-            }
-            ec2Service.deleteTags(region, List.of(groupId), remove);
-        }
-        if (!desired.isEmpty()) {
-            List<Tag> add = new ArrayList<>();
-            for (Map.Entry<String, String> entry : desired.entrySet()) {
-                add.add(new Tag(entry.getKey(), entry.getValue()));
-            }
-            ec2Service.createTags(region, List.of(groupId), add);
-        }
-    }
-
     /**
      * Resolves a peer group's name to its id, the same lookup {@code Ec2Service} performs when it
      * stores an authorized rule. Group names are unique per VPC rather than per region, so the
