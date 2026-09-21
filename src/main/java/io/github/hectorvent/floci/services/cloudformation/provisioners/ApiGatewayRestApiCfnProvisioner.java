@@ -73,7 +73,10 @@ public class ApiGatewayRestApiCfnProvisioner implements CfnResourceProvisioner {
         // deployments, stages and authorizers, so the child types own no separate delete, the same
         // as the legacy switch (their delete fell through to a no-op).
         if (REST_API.equals(resourceType)) {
-            apiGatewayService.deleteRestApi(region, physicalId);
+            // Tolerate an API already removed out of band so DeleteStack does not fail on it;
+            // deleteRestApi resolves the id first and raises NotFoundException when it is gone.
+            CfnDeletes.safeDelete("REST API", physicalId,
+                    () -> apiGatewayService.deleteRestApi(region, physicalId), "NotFoundException");
         }
     }
 

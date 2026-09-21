@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.cloudformation.provisioners;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.apigateway.ApiGatewayService;
 import io.github.hectorvent.floci.services.apigateway.model.ApiGatewayResource;
 import io.github.hectorvent.floci.services.apigateway.model.Authorizer;
@@ -16,11 +17,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -133,6 +137,23 @@ class ApiGatewayRestApiCfnProvisionerTest {
 
         provisioner.delete("AWS::ApiGateway::Method", "api-1-res-1-GET", "us-east-1");
         verify(api, never()).deleteRestApi("us-east-1", "api-1-res-1-GET");
+    }
+
+    @Test
+    void deleteToleratesARestApiAlreadyGone() {
+        doThrow(new AwsException("NotFoundException", "Invalid API id specified", 404))
+                .when(api).deleteRestApi("us-east-1", "api-1");
+
+        assertDoesNotThrow(() -> provisioner.delete("AWS::ApiGateway::RestApi", "api-1", "us-east-1"));
+    }
+
+    @Test
+    void deletePropagatesAnUnexpectedRestApiError() {
+        doThrow(new AwsException("TooManyRequestsException", "rate exceeded", 429))
+                .when(api).deleteRestApi("us-east-1", "api-1");
+
+        assertThrows(AwsException.class,
+                () -> provisioner.delete("AWS::ApiGateway::RestApi", "api-1", "us-east-1"));
     }
 
     private ProvisionContext ctx() {
