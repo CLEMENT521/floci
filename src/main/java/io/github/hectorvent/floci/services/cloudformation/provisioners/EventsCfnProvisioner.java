@@ -636,7 +636,7 @@ public class EventsCfnProvisioner implements CfnResourceProvisioner {
 
 
     private void provisionEventBusPolicy(StackResource r, JsonNode props, ProvisionContext ctx) {
-        String busName = resolveOrDefault(props, "EventBusName", ctx, "default");
+        String busName = ctx.resolveOrDefault(props, "EventBusName", "default");
         String statementId = ctx.resolveOptional(props, "StatementId");
         if (statementId == null || statementId.isBlank()) {
             throw new AwsException("ValidationException", "EventBusPolicy StatementId is required.", 400);
@@ -727,10 +727,6 @@ public class EventsCfnProvisioner implements CfnResourceProvisioner {
         CfnDeletes.safeDelete("Event bus policy statement", physicalId,
                 () -> eventBridgeService.removePermission(busName, statementId, false, region),
                 "ResourceNotFoundException");
-    }
-    private static String resolveOrDefault(JsonNode props, String name, ProvisionContext ctx, String defaultValue) {
-        String value = ctx.resolveOptional(props, name);
-        return (value != null && !value.isBlank()) ? value : defaultValue;
     }
 
     /** Copied from the monolith: the shared original serves six other callers and stays there. */

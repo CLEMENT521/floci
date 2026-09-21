@@ -131,7 +131,7 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
         }
         Map<String, Object> req = new HashMap<>();
         req.put("name", name);
-        req.put("protocolType", resolveOrDefault(ctx, props, "ProtocolType", "HTTP"));
+        req.put("protocolType", ctx.resolveOrDefault(props, "ProtocolType", "HTTP"));
         req.put("routeSelectionExpression", ctx.resolveOptional(props, "RouteSelectionExpression"));
         req.put("description", ctx.resolveOptional(props, "Description"));
         req.put("apiKeySelectionExpression", ctx.resolveOptional(props, "ApiKeySelectionExpression"));
@@ -782,7 +782,7 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
         String apiId = ctx.resolveOptional(props, "ApiId");
         Map<String, Object> req = new HashMap<>();
         req.put("routeKey", ctx.resolveOptional(props, "RouteKey"));
-        req.put("authorizationType", resolveOrDefault(ctx, props, "AuthorizationType", "NONE"));
+        req.put("authorizationType", ctx.resolveOrDefault(props, "AuthorizationType", "NONE"));
         req.put("authorizerId", ctx.resolveOptional(props, "AuthorizerId"));
         // Always present (empty when the property is absent) so an UpdateStack that removes
         // AuthorizationScopes from the template clears the route's scopes instead of keeping them.
@@ -807,7 +807,7 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
         Map<String, Object> req = new HashMap<>();
         req.put("integrationType", ctx.resolveOptional(props, "IntegrationType"));
         req.put("integrationUri", ctx.resolveOptional(props, "IntegrationUri"));
-        req.put("payloadFormatVersion", resolveOrDefault(ctx, props, "PayloadFormatVersion", "2.0"));
+        req.put("payloadFormatVersion", ctx.resolveOrDefault(props, "PayloadFormatVersion", "2.0"));
 
         Integration integration;
         if (r.getPhysicalId() == null) {
@@ -829,7 +829,7 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
 
         Map<String, Object> req = new HashMap<>();
         req.put("stageName", stageName);
-        req.put("autoDeploy", resolveOrDefault(ctx, props, "AutoDeploy", "false"));
+        req.put("autoDeploy", ctx.resolveOrDefault(props, "AutoDeploy", "false"));
         Map<String, String> stageVariables = parseStageVariables(props, engine);
         if (stageVariables != null) {
             req.put("stageVariables", stageVariables);
@@ -861,11 +861,6 @@ public class ApiGatewayV2CfnProvisioner implements CfnResourceProvisioner {
     }
 
     // ── Local copies of shared utilities (still used by staying monolith types) ──
-
-    private static String resolveOrDefault(ProvisionContext ctx, JsonNode props, String name, String defaultValue) {
-        String value = ctx.resolveOptional(props, name);
-        return value != null && !value.isBlank() ? value : defaultValue;
-    }
 
     private static String textOrNull(JsonNode node, String field) {
         return node != null && node.hasNonNull(field) ? node.path(field).asText() : null;

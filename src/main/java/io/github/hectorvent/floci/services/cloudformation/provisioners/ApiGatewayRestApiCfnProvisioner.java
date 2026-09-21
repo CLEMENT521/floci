@@ -166,12 +166,12 @@ public class ApiGatewayRestApiCfnProvisioner implements CfnResourceProvisioner {
         String httpMethod = ctx.resolveOptional(props, "HttpMethod");
 
         Map<String, Object> req = new HashMap<>();
-        req.put("authorizationType", resolveOrDefault(ctx, props, "AuthorizationType", "NONE"));
+        req.put("authorizationType", ctx.resolveOrDefault(props, "AuthorizationType", "NONE"));
         String authorizerId = ctx.resolveOptional(props, "AuthorizerId");
         if (authorizerId != null) {
             req.put("authorizerId", authorizerId);
         }
-        req.put("apiKeyRequired", Boolean.parseBoolean(resolveOrDefault(ctx, props, "ApiKeyRequired", "false")));
+        req.put("apiKeyRequired", Boolean.parseBoolean(ctx.resolveOrDefault(props, "ApiKeyRequired", "false")));
 
         apiGatewayService.putMethod(region, apiId, resourceId, httpMethod, req);
         r.setPhysicalId(apiId + "-" + resourceId + "-" + httpMethod);
@@ -227,8 +227,4 @@ public class ApiGatewayRestApiCfnProvisioner implements CfnResourceProvisioner {
     }
 
     /** Resolves an optional property, falling back to {@code defaultValue} when absent or blank. */
-    private static String resolveOrDefault(ProvisionContext ctx, JsonNode props, String name, String defaultValue) {
-        String value = ctx.resolveOptional(props, name);
-        return value != null && !value.isBlank() ? value : defaultValue;
-    }
 }

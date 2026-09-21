@@ -134,7 +134,7 @@ public class LambdaCfnProvisioner implements CfnResourceProvisioner {
         String stackName = ctx.stackName();
         String explicitName = ctx.resolveOptional(props, "FunctionName");
         boolean hasExplicitName = explicitName != null && !explicitName.isBlank();
-        String packageType = resolveOrDefault(ctx, props, "PackageType", "Zip");
+        String packageType = ctx.resolveOrDefault(props, "PackageType", "Zip");
         String previousNameMode = r.getAttributes().get(LAMBDA_NAME_MODE_ATTR);
         if (previousNameMode == null && r.getPhysicalId() != null) {
             // Functions persisted before LAMBDA_NAME_MODE_ATTR existed have no recorded mode, but an
@@ -182,7 +182,7 @@ public class LambdaCfnProvisioner implements CfnResourceProvisioner {
         createRequest.put("FunctionName", functionName);
         createRequest.put("PackageType", packageType);
 
-        String role = resolveOrDefault(ctx, props, "Role",
+        String role = ctx.resolveOrDefault(props, "Role",
                 AwsArnUtils.Arn.of("iam", "", ctx.accountId(), "role/default").toString());
         createRequest.put("Role", role);
         configRequest.put("Role", role);
@@ -190,8 +190,8 @@ public class LambdaCfnProvisioner implements CfnResourceProvisioner {
         String runtime;
         String handler;
         if ("Zip".equals(packageType)) {
-            runtime = resolveOrDefault(ctx, props, "Runtime", "nodejs18.x");
-            handler = resolveOrDefault(ctx, props, "Handler", "index.handler");
+            runtime = ctx.resolveOrDefault(props, "Runtime", "nodejs18.x");
+            handler = ctx.resolveOrDefault(props, "Handler", "index.handler");
             createRequest.put("Runtime", runtime);
             createRequest.put("Handler", handler);
             configRequest.put("Runtime", runtime);
@@ -785,11 +785,6 @@ public class LambdaCfnProvisioner implements CfnResourceProvisioner {
             }
             LOG.debugv("Lambda function already gone, treating as deleted: {0}", functionName);
         }
-    }
-
-    private String resolveOrDefault(ProvisionContext ctx, JsonNode props, String name, String defaultValue) {
-        String value = ctx.resolveOptional(props, name);
-        return (value != null && !value.isBlank()) ? value : defaultValue;
     }
 
     /**

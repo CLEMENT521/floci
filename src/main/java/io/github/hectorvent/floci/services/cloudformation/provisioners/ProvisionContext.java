@@ -98,6 +98,16 @@ public record ProvisionContext(CloudFormationTemplateEngine engine, String regio
     }
 
     /**
+     * Resolves an optional property through the engine, falling back to {@code defaultValue} when it
+     * is absent or resolves to blank. Shared by the per-service provisioners so none carries its own
+     * copy.
+     */
+    public String resolveOrDefault(JsonNode props, String name, String defaultValue) {
+        String value = resolveOptional(props, name);
+        return (value != null && !value.isBlank()) ? value : defaultValue;
+    }
+
+    /**
      * Resolves a list property to its non-blank elements, or an empty list when absent.
      *
      * <p>Routes through {@code engine.resolveStringList} so a list-valued intrinsic
