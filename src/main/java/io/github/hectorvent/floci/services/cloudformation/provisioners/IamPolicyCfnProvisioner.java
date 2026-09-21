@@ -5,7 +5,6 @@ import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.cloudformation.CloudFormationTemplateEngine;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.iam.IamService;
-import io.github.hectorvent.floci.services.iam.model.IamRole;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -18,7 +17,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 /**
  * CloudFormation provisioning for {@code AWS::IAM::Policy}, which in AWS is an <em>inline</em>
@@ -282,7 +280,7 @@ public class IamPolicyCfnProvisioner implements CfnResourceProvisioner {
         String policyArn = resource.getPhysicalId();
         List<String> detachedRoles = new ArrayList<>();
         try {
-            for (String roleName : managedPolicyRoleTargets(resource)) {
+            for (String roleName : IamManagedPolicyDeletes.roleTargets(iamService, resource)) {
                 try {
                     iamService.detachRolePolicy(roleName, policyArn);
                     detachedRoles.add(roleName);
@@ -292,7 +290,7 @@ public class IamPolicyCfnProvisioner implements CfnResourceProvisioner {
                     }
                 }
             }
-            deleteManagedPolicySafe(policyArn);
+            IamManagedPolicyDeletes.deletePolicyTolerating(iamService, policyArn);
         } catch (RuntimeException failure) {
             Collections.reverse(detachedRoles);
             for (String roleName : detachedRoles) {
@@ -305,48 +303,6 @@ public class IamPolicyCfnProvisioner implements CfnResourceProvisioner {
     }
 
     private void deleteLegacyManagedPolicy(StackResource resource) {
-        String policyArn = resource.getPhysicalId();
-        for (String roleName : managedPolicyRoleTargets(resource)) {
-            try {
-                iamService.detachRolePolicy(roleName, policyArn);
-            } catch (AwsException e) {
-                // Deletion is idempotent: the role or attachment can already be absent on a retry,
-                // but permission/service failures must keep the stack in DELETE_FAILED.
-                if (!"NoSuchEntity".equals(e.getErrorCode())) {
-                    throw e;
-                }
-            }
-        }
-        deleteManagedPolicySafe(policyArn);
-    }
-
-    private void deleteManagedPolicySafe(String policyArn) {
-        try {
-            iamService.deletePolicy(policyArn);
-        } catch (AwsException e) {
-            if (!"NoSuchEntity".equals(e.getErrorCode())) {
-                throw e;
-            }
-            LOG.debugv("IAM policy already gone, treating as deleted: {0}", policyArn);
-        }
-    }
-
-    private List<String> managedPolicyRoleTargets(StackResource resource) {
-        String policyArn = resource.getPhysicalId();
-        String targets = resource.getAttributes().get("ManagedPolicyRoleTargets");
-        if (targets == null) {
-            // Stacks persisted before target metadata was introduced still need to be deletable.
-            // The policy is stack-owned, so discover only roles that currently reference this ARN.
-            targets = iamService.listRoles("/").stream()
-                    .filter(role -> role.getAttachedPolicyArns().contains(policyArn))
-                    .map(IamRole::getRoleName)
-                    .collect(Collectors.joining("\n"));
-        }
-        if (targets == null || targets.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(targets.split("\n"))
-                .filter(roleName -> !roleName.isBlank())
-                .toList();
+        IamManagedPolicyDeletes.detachRolesAndDeletePolicy(iamService, resource);
     }
 }

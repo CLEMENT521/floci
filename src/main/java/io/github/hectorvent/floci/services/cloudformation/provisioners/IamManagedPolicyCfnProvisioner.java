@@ -249,41 +249,6 @@ public class IamManagedPolicyCfnProvisioner implements CfnResourceProvisioner {
 
     @Override
     public void delete(StackResource resource, String region) {
-        String policyArn = resource.getPhysicalId();
-        for (String roleName : managedPolicyRoleTargets(resource)) {
-            try {
-                iamService.detachRolePolicy(roleName, policyArn);
-            } catch (AwsException e) {
-                // Deletion is idempotent: the role or attachment can already be absent on a retry,
-                // but permission/service failures must keep the stack in DELETE_FAILED.
-                if (!"NoSuchEntity".equals(e.getErrorCode())) {
-                    throw e;
-                }
-            }
-        }
-        try {
-            iamService.deletePolicy(policyArn);
-        } catch (AwsException e) {
-            if (!"NoSuchEntity".equals(e.getErrorCode())) {
-                throw e;
-            }
-        }
-    }
-
-    private List<String> managedPolicyRoleTargets(StackResource resource) {
-        String policyArn = resource.getPhysicalId();
-        String targets = resource.getAttributes().get("ManagedPolicyRoleTargets");
-        if (targets == null) {
-            // Stacks persisted before target metadata was introduced still need to be deletable.
-            // The policy is stack-owned, so discover only roles that currently reference this ARN.
-            targets = iamService.listRoles("/").stream()
-                    .filter(role -> role.getAttachedPolicyArns().contains(policyArn))
-                    .map(role -> role.getRoleName())
-                    .collect(Collectors.joining("\n"));
-        }
-        if (targets == null || targets.isBlank()) {
-            return List.of();
-        }
-        return targets.lines().filter(roleName -> !roleName.isBlank()).toList();
+        IamManagedPolicyDeletes.detachRolesAndDeletePolicy(iamService, resource);
     }
 }
