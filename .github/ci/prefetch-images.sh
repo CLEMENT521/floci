@@ -37,4 +37,21 @@ grep -q 'AppSyncJsResolverDockerIntegrationTest' "$SHARD_FILE" && [ -n "$JS_RUNT
 # application.yml. The other services/rds classes mock the container layer.
 SQLSERVER_IMAGE="$(grep -oE 'default-sql-server-image: *"[^"]+"' src/main/resources/application.yml | grep -oE '"[^"]+"' | tr -d '"')"
 grep -q 'RdsAwsIntegrationTest' "$SHARD_FILE" && [ -n "$SQLSERVER_IMAGE" ] && pull "$SQLSERVER_IMAGE"
+# Postgres is the most-pulled image in CI: Redshift pins it in application.yml, RDS adapts
+# postgres:<version>-alpine to the engine version its tests request (16.3), and the CloudFormation
+# provisioner tests reach it through Redshift. It was pulled inline in all four shards.
+REDSHIFT_PG_IMAGE="$(grep -oE 'image-version: *postgres:[^ ]+' src/main/resources/application.yml | awk '{print $2}')"
+grep -qE '/redshift/|/cloudformation/' "$SHARD_FILE" && [ -n "$REDSHIFT_PG_IMAGE" ] && pull "$REDSHIFT_PG_IMAGE"
+grep -q '/rds/' "$SHARD_FILE" && pull postgres:16.3-alpine
+# The InfluxDB and k3s pins live in application.yml like the sidecars above.
+INFLUX_IMAGE="$(grep -oE 'default-image: *"influxdb:[^"]+"' src/main/resources/application.yml | grep -oE '"[^"]+"' | tr -d '"')"
+grep -q '/timestreaminfluxdb/' "$SHARD_FILE" && [ -n "$INFLUX_IMAGE" ] && pull "$INFLUX_IMAGE"
+K3S_IMAGE="$(grep -oE 'default-image: *"rancher/k3s:[^"]+"' src/main/resources/application.yml | grep -oE '"[^"]+"' | tr -d '"')"
+grep -q '/eks/' "$SHARD_FILE" && [ -n "$K3S_IMAGE" ] && pull "$K3S_IMAGE"
+# The Firelens test names the log router image itself rather than taking it from config.
+# busybox is the base of the image EcsContainerManagerVolumesFromDockerIntegrationTest builds, and
+# a build resolves its base against the registry rather than through ImageCacheService. That pull
+# has hit "toomanyrequests: Rate exceeded" and failed the shard three times (PRs 4075, 4142, 4164),
+# so it is prefetched for the cache hit rather than for the second it saves.
+grep -q '/ecs/container/' "$SHARD_FILE" && { pull public.ecr.aws/aws-observability/aws-for-fluent-bit:3; pull public.ecr.aws/docker/library/busybox:latest; }
 exit 0
