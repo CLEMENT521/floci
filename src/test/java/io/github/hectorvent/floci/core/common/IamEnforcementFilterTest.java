@@ -38,6 +38,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -139,6 +140,108 @@ class IamEnforcementFilterTest {
         filter.filter(containerRequest);
 
         verify(arnBuilder).buildResources("lambda", containerRequest, "us-east-1", "222233334444");
+    }
+
+    @Test
+    void unknownAccessKeyIsRejectedInsteadOfBypassingEnforcement() {
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=AKIADOESNOTEXIST0000/20260629/us-east-1/lambda/aws4_request, "
+                + "SignedHeaders=host, Signature=garbage";
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("AKIADOESNOTEXIST0000");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(actionRegistry.resolve("lambda", containerRequest)).thenReturn("lambda:InvokeFunction");
+        when(iamService.resolveCallerContext("AKIADOESNOTEXIST0000")).thenReturn(null);
+        when(iamService.isKnownAccessKey("AKIADOESNOTEXIST0000")).thenReturn(false);
+
+        newFilter().filter(containerRequest);
+
+        ArgumentCaptor<Response> response = ArgumentCaptor.captor();
+        verify(containerRequest).abortWith(response.capture());
+        assertEquals(403, response.getValue().getStatus());
+        assertTrue(response.getValue().getEntity().toString().contains("UnrecognizedClientException"),
+                response.getValue().getEntity().toString());
+        verifyNoInteractions(evaluator);
+    }
+
+    @Test
+    void unknownAccessKeyOnAnS3RequestIsRejectedWithTheS3ErrorCode() {
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=AKIADOESNOTEXIST0000/20260629/us-east-1/s3/aws4_request, "
+                + "SignedHeaders=host, Signature=garbage";
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("AKIADOESNOTEXIST0000");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(actionRegistry.resolve("s3", containerRequest)).thenReturn("s3:GetObject");
+        when(iamService.resolveCallerContext("AKIADOESNOTEXIST0000")).thenReturn(null);
+        when(iamService.isKnownAccessKey("AKIADOESNOTEXIST0000")).thenReturn(false);
+
+        newFilter().filter(containerRequest);
+
+        ArgumentCaptor<Response> response = ArgumentCaptor.captor();
+        verify(containerRequest).abortWith(response.capture());
+        assertEquals(403, response.getValue().getStatus());
+        assertTrue(response.getValue().getEntity().toString().contains("InvalidAccessKeyId"),
+                response.getValue().getEntity().toString());
+    }
+
+    @Test
+    void unknownAccessKeyOnAQueryRequestIsRejectedWithTheQueryErrorCode() {
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=AKIADOESNOTEXIST0000/20260629/us-east-1/sts/aws4_request, "
+                + "SignedHeaders=host, Signature=garbage";
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("AKIADOESNOTEXIST0000");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(containerRequest.getMediaType()).thenReturn(MediaType.APPLICATION_FORM_URLENCODED_TYPE);
+        when(actionRegistry.resolve("sts", containerRequest)).thenReturn("sts:AssumeRole");
+        when(iamService.resolveCallerContext("AKIADOESNOTEXIST0000")).thenReturn(null);
+        when(iamService.isKnownAccessKey("AKIADOESNOTEXIST0000")).thenReturn(false);
+
+        newFilter().filter(containerRequest);
+
+        ArgumentCaptor<Response> response = ArgumentCaptor.captor();
+        verify(containerRequest).abortWith(response.capture());
+        assertEquals(403, response.getValue().getStatus());
+        // Query services answer an unrecognised credential with InvalidClientTokenId, not the
+        // JSON services' UnrecognizedClientException.
+        assertTrue(response.getValue().getEntity().toString().contains("InvalidClientTokenId"),
+                response.getValue().getEntity().toString());
+    }
+
+    @Test
+    void aKnownCredentialWithoutAMappableCallerContextStillPassesThrough() {
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=ASIAIDENTITYSESSION/20260629/us-east-1/lambda/aws4_request, "
+                + "SignedHeaders=host, Signature=abc";
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("ASIAIDENTITYSESSION");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(actionRegistry.resolve("lambda", containerRequest)).thenReturn("lambda:InvokeFunction");
+        when(iamService.resolveCallerContext("ASIAIDENTITYSESSION")).thenReturn(null);
+        when(iamService.isKnownAccessKey("ASIAIDENTITYSESSION")).thenReturn(true);
+
+        newFilter().filter(containerRequest);
+
+        verify(containerRequest, never()).abortWith(any());
+        verifyNoInteractions(evaluator);
+    }
+
+    @Test
+    void bareAccountIdKeyWithNoScpCeilingStillPassesThrough() {
+        ContainerRequestContext containerRequest = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=000000000000/20260629/us-east-1/lambda/aws4_request, "
+                + "SignedHeaders=host, Signature=abc";
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("000000000000");
+        when(containerRequest.getHeaderString("Authorization")).thenReturn(auth);
+        when(actionRegistry.resolve("lambda", containerRequest)).thenReturn("lambda:InvokeFunction");
+        when(iamService.resolveCallerContext("000000000000")).thenReturn(null);
+
+        newFilter().filter(containerRequest);
+
+        verify(containerRequest, never()).abortWith(any());
+        verify(iamService, never()).isKnownAccessKey(any());
     }
 
     @Test

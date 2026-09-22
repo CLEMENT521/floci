@@ -455,8 +455,7 @@ floci:
 
 SCP semantics match AWS: SCPs never grant permissions — they cap what identity policies
 may allow; the organization's **management account is exempt**; and an account outside
-any organization is unaffected. The `test` credential and unknown access keys are never
-SCP-denied.
+any organization is unaffected. The `test` credential is never SCP-denied.
 
 **The account-root principal is subject to SCPs.** floci's account root is a bare
 12-digit account-id access key (the LocalStack multi-account convention). It carries no
@@ -468,8 +467,8 @@ allow-everything root identity and evaluates the request against the SCP chain. 
 case **SCPs apply and nothing else does** — no identity policies, permission boundary, or
 session policy attaches to the bare account key. If the account has no effective SCP
 ceiling (the management account, an account outside any organization, or the SCP type
-disabled), the bare key still bypasses enforcement entirely, and unknown `AKIA…` keys
-always bypass unconditionally.
+disabled), the bare key still bypasses enforcement entirely. An `AKIA…` key that exists
+nowhere is rejected rather than bypassed.
 
 ### Bypass rules
 
@@ -478,7 +477,8 @@ These identities always bypass enforcement (backward-compatible defaults):
 | Identity | Behaviour |
 |---|---|
 | Access key `test` (the default dev credential) | Always allowed — no policy lookup |
-| Unknown access key (not in IAM store) | Always allowed — backward-compatible with pre-existing keys |
+| Access key that exists nowhere | **Rejected** with `403`: `InvalidAccessKeyId` for S3, `InvalidClientTokenId` for Query services, `UnrecognizedClientException` for JSON services |
+| Credential the filter cannot map to policies, such as a session carrying no role ARN | Allowed: it is a real credential, so rejecting it would refuse an authenticated caller |
 | No `Authorization` header | Allowed — unauthenticated path (e.g. health checks) |
 | Unresolvable IAM action for the request | Allowed — unknown mappings are permissive |
 
@@ -659,7 +659,8 @@ the emulator cannot reason about:
 | --- | --- |
 | Unresolvable action | Allowed. An action the registry cannot resolve is not evaluated. |
 | `sts:GetCallerIdentity` | Always allowed — AWS returns caller identity even when a policy denies it. |
-| Unknown access key | Allowed. A key that resolves to no IAM identity bypasses enforcement. |
+| Access key that exists nowhere | **Rejected** with `403`, in each protocol's own vocabulary: `InvalidAccessKeyId` for S3, `InvalidClientTokenId` for Query services, `UnrecognizedClientException` for JSON services. Allowing it would let any string authorize the request. |
+| Known credential with no mappable caller context | Allowed. A stored session carrying no role ARN is a real credential, so it is not treated as unauthenticated. |
 | Bare account-id key with no SCP ceiling | Allowed. With no organization or SCP enforcement off, the account root keeps the historical bypass. |
 | Bare account-id key **with** an SCP ceiling | Enforced as the account root, bounded by the SCP chain. |
 

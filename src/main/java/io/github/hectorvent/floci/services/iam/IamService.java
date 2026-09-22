@@ -2387,6 +2387,30 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         return null;
     }
 
+    /**
+     * True when this access key exists anywhere in the emulator: an IAM user's long-term key in
+     * any account, or a session credential.
+     *
+     * <p>{@link #resolveCallerContext} returns null both for a key that does not exist and for a
+     * key it cannot map to policies (a session carrying no role ARN). Only the first of those is
+     * an unauthenticated caller, so enforcement needs to tell them apart. The lookup spans every
+     * account deliberately: a key belonging to another account is a real credential, and denying
+     * it here would be a false rejection rather than a closed hole.
+     */
+    public boolean isKnownAccessKey(String accessKeyId) {
+        if (accessKeyId == null || accessKeyId.isBlank()) {
+            return false;
+        }
+        if (findSessionForCallerContext(accessKeyId).isPresent()) {
+            return true;
+        }
+        if (accessKeys.get(accessKeyId).isPresent()) {
+            return true;
+        }
+        return accessKeys instanceof AccountAwareStorageBackend<AccessKey> aware
+                && !aware.scanAllAccountEntries(accessKeyId::equals).isEmpty();
+    }
+
     private Optional<SessionCredential> findSessionForCallerContext(String accessKeyId) {
         if (accessKeyId == null || accessKeyId.isBlank()) {
             return Optional.empty();

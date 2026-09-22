@@ -41,7 +41,8 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>Enforcement is disabled (default)</li>
  *   <li>Access key is {@code "test"} (root/admin stand-in)</li>
- *   <li>Access key is not found in the IAM store (backward-compatible with pre-existing credentials)</li>
+ *   <li>Access key is a real credential this filter cannot map to policies, such as a session
+ *       carrying no role ARN. An access key that exists nowhere is rejected, not bypassed.</li>
  *   <li>The action cannot be resolved (unknown mapping → permissive)</li>
  *   <li>The action is {@code sts:GetCallerIdentity}, which AWS allows without permissions</li>
  * </ul>
@@ -64,6 +65,9 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     /** Extracts the credential-scope service name (e.g. "s3", "lambda"). */
     private static final Pattern SERVICE_PATTERN =
             Pattern.compile("Credential=\\S+/\\d{8}/[^/]+/([^/]+)/");
+
+    /** AWS's wording for a credential it does not recognise. */
+    private static final String INVALID_SECURITY_TOKEN = "The security token included in the request is invalid.";
 
     /**
      * Implicit identity policy for the account-root principal: full access, bounded only by SCPs.
@@ -195,13 +199,24 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         if (caller == null) {
             // A bare 12-digit account-id key is floci's account-root principal: not a registered
             // IAM identity (resolveCallerContext → null), but in AWS the account root is still
-            // bounded by SCPs. Enforce them when the account actually has an SCP ceiling; otherwise
-            // preserve the historical unknown-key bypass.
-            if (scpLevels == null || !akid.equals(accountId)) {
-                return; // unknown access key or no SCP ceiling → bypass (backward-compat)
+            // bounded by SCPs. Enforce them when the account actually has an SCP ceiling.
+            if (akid.equals(accountId)) {
+                if (scpLevels == null) {
+                    return; // account root with no ceiling → nothing to enforce
+                }
+                caller = CallerContext.of(List.of(ROOT_ALLOW_ALL));
+                accountRootPrincipal = true;
+            } else if (iamService.isKnownAccessKey(akid)) {
+                // A real credential this filter cannot map to policies, such as a session with no
+                // role ARN. Denying it would reject an authenticated caller, so it stays allowed.
+                return;
+            } else {
+                // No such credential anywhere. Enforcement is on and the caller is unauthenticated,
+                // so allowing it would hand an arbitrary access key id every permission there is.
+                LOG.debugv("Rejecting request signed with an unknown access key id {0}", akid);
+                ctx.abortWith(unrecognizedClientResponse(credentialScope, ctx.getMediaType()));
+                return;
             }
-            caller = CallerContext.of(List.of(ROOT_ALLOW_ALL));
-            accountRootPrincipal = true;
         }
         if (scpLevels != null) {
             caller = caller.withScpLevels(scpLevels);
@@ -392,6 +407,9 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
             boolean accountRootPrincipal = false;
             CallerContext caller = iamService.resolveCallerContext(akid);
             if (caller == null) {
+                // No unknown-key rejection here, unlike filter(): this path runs only for a
+                // presigned POST, whose form signature S3PostPolicySigner has already verified
+                // against the key's secret, so an unknown key never reaches it.
                 if (scpLevels == null || !akid.equals(accountId)) {
                     return;
                 }
@@ -633,11 +651,15 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     }
 
     private static Response queryXmlAccessDenied(String message) {
+        return queryXmlError("AccessDenied", message);
+    }
+
+    private static Response queryXmlError(String code, String message) {
         String xml = new XmlBuilder()
                 .start("ErrorResponse")
                   .start("Error")
                     .elem("Type", "Sender")
-                    .elem("Code", "AccessDenied")
+                    .elem("Code", code)
                     .elem("Message", message)
                   .end("Error")
                   .elem("RequestId", UUID.randomUUID().toString())
@@ -650,11 +672,19 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         return s3XmlAccessDenied(message, null);
     }
 
+    private static Response s3XmlError(String code, String message) {
+        return s3Xml(code, message, null);
+    }
+
     private static Response s3XmlAccessDenied(String message, String resourcePath) {
+        return s3Xml("AccessDenied", message, resourcePath);
+    }
+
+    private static Response s3Xml(String code, String message, String resourcePath) {
         XmlBuilder xml = new XmlBuilder()
                 .raw("<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
                 .start("Error")
-                  .elem("Code", "AccessDenied")
+                  .elem("Code", code)
                   .elem("Message", message);
         if (resourcePath != null && !resourcePath.isBlank()) {
             xml.elem("Resource", resourcePath);
@@ -662,6 +692,28 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         xml.elem("RequestId", UUID.randomUUID().toString())
            .end("Error");
         return Response.status(403).type(MediaType.APPLICATION_XML).entity(xml.build()).build();
+    }
+
+    /**
+     * The response for an access key that exists nowhere, in each protocol's own vocabulary for
+     * the same failure. S3 answers with {@code InvalidAccessKeyId}, as
+     * {@code S3HeaderSignatureFilter} already does. Query services answer with
+     * {@code InvalidClientTokenId}: neither code is modelled by sts, iam or sqs, but botocore's
+     * own integration tests retry on {@code InvalidClientTokenId} from {@code sts:AssumeRole} and
+     * {@code iam:ListGroups} while credentials propagate. JSON services answer with
+     * {@code UnrecognizedClientException}, the only place botocore models it (CloudWatch Logs)
+     * and what the API Gateway execute path already returns.
+     */
+    static Response unrecognizedClientResponse(String credentialScope, MediaType requestMediaType) {
+        if ("s3".equals(credentialScope)) {
+            return s3XmlError("InvalidAccessKeyId",
+                    "The AWS Access Key Id you provided does not exist in our records.");
+        }
+        if (isFormEncoded(requestMediaType)) {
+            return queryXmlError("InvalidClientTokenId", INVALID_SECURITY_TOKEN);
+        }
+        String body = "{\"__type\":\"UnrecognizedClientException\",\"message\":\"" + INVALID_SECURITY_TOKEN + "\"}";
+        return Response.status(403).type(MediaType.APPLICATION_JSON).entity(body).build();
     }
 
     private static Response jsonAccessDenied(String message) {
