@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -113,7 +114,7 @@ class CodeArtifactMavenDockerIntegrationTest {
         // configured settings.xml credentials when the challenge scheme matches what it sent.
         given().get("/codeartifact/maven/" + DOMAIN + "/" + REPO + "/" + GAV)
                 .then().statusCode(401)
-                .header("WWW-Authenticate", org.hamcrest.Matchers.startsWith("Basic"));
+                .header("WWW-Authenticate", startsWith("Basic"));
 
         given().header("Authorization", "Bearer not-a-real-token")
                 .get("/codeartifact/maven/" + DOMAIN + "/" + REPO + "/" + GAV)
@@ -239,6 +240,38 @@ class CodeArtifactMavenDockerIntegrationTest {
                 .extract().jsonPath().getString("authorizationToken");
 
         byte[] content = "non-default-region-bytes".getBytes(StandardCharsets.UTF_8);
+        given().header("Authorization", "Bearer " + token).body(content)
+                .put("/codeartifact/maven/" + domain + "/" + REPO + "/" + GAV)
+                .then().statusCode(200);
+
+        byte[] fetched = given().header("Authorization", "Bearer " + token)
+                .get("/codeartifact/maven/" + domain + "/" + REPO + "/" + GAV)
+                .then().statusCode(200)
+                .extract().asByteArray();
+        assertEquals(new String(content, StandardCharsets.UTF_8), new String(fetched, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    @Order(9)
+    void aDomainCreatedUnderANonDefaultAccountIsServedThroughTheTokensOwnAccountNotTheDefault() {
+        // Every other test in this class authenticates as the default account (000000000000), so
+        // none of them would notice if the owner half of the token-scope fix regressed and every
+        // Maven request fell back to the default account instead of the domain's real one.
+        String otherAccountAuth = "AWS4-HMAC-SHA256 Credential=111122223333/20260904/us-east-1/codeartifact/aws4_request";
+        String domain = "maven-sidecar-cross-account-domain";
+
+        given().contentType("application/json").header("Authorization", otherAccountAuth).body("{}")
+                .post("/v1/domain?domain=" + domain)
+                .then().statusCode(200);
+        given().contentType("application/json").header("Authorization", otherAccountAuth).body("{}")
+                .post("/v1/repository?domain=" + domain + "&repository=" + REPO)
+                .then().statusCode(200);
+        String token = given().header("Authorization", otherAccountAuth)
+                .post("/v1/authorization-token?domain=" + domain)
+                .then().statusCode(200)
+                .extract().jsonPath().getString("authorizationToken");
+
+        byte[] content = "cross-account-bytes".getBytes(StandardCharsets.UTF_8);
         given().header("Authorization", "Bearer " + token).body(content)
                 .put("/codeartifact/maven/" + domain + "/" + REPO + "/" + GAV)
                 .then().statusCode(200);
