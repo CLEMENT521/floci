@@ -186,8 +186,9 @@ final class CognitoAuthFlowHandler {
     }
 
     /**
-     * A client with no stored list, as one persisted before the default was materialised, gets the
-     * AWS default rather than every flow.
+     * A client with no stored {@code ExplicitAuthFlows} gets the AWS default rather than every
+     * flow. Floci never materialises the default into storage, so this covers every such client,
+     * not just one from before enforcement existed.
      */
     private static List<String> enabledAuthFlows(UserPoolClient client) {
         List<String> enabled = client.getExplicitAuthFlows();
