@@ -1,8 +1,8 @@
 package io.github.hectorvent.floci.services.docdb;
 
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.testing.DocDbMockProfile;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -24,17 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * that no describe created and no delete can remove.
  */
 @QuarkusTest
-@TestProfile(DocDbTagConcurrencyTest.NoContainersProfile.class)
+@TestProfile(DocDbMockProfile.class)
 class DocDbTagConcurrencyTest {
 
     /** The race is in storage, not in the container: starting one per attempt only adds seconds. */
-    public static class NoContainersProfile implements QuarkusTestProfile {
-        @Override
-        public Map<String, String> getConfigOverrides() {
-            return Map.of("floci.services.docdb.mock", "true");
-        }
-    }
-
     @Inject
     DocDbService service;
 

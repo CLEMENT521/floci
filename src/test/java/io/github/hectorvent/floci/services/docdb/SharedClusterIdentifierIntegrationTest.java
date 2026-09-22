@@ -1,8 +1,8 @@
 package io.github.hectorvent.floci.services.docdb;
 
 import io.github.hectorvent.floci.services.rds.RdsService;
+import io.github.hectorvent.floci.testing.RdsAndDocDbMockProfile;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import io.restassured.specification.RequestSpecification;
 import jakarta.inject.Inject;
@@ -25,18 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * name in different stores would share one ARN, and no tag call could say which was meant.
  */
 @QuarkusTest
-@TestProfile(SharedClusterIdentifierIntegrationTest.NoContainersProfile.class)
+@TestProfile(RdsAndDocDbMockProfile.class)
 class SharedClusterIdentifierIntegrationTest {
 
     /** Neither engine's container is what this is about, and starting one costs the test 30s. */
-    public static class NoContainersProfile implements QuarkusTestProfile {
-        @Override
-        public Map<String, String> getConfigOverrides() {
-            return Map.of("floci.services.rds.mock", "true",
-                          "floci.services.docdb.mock", "true");
-        }
-    }
-
     @Inject
     DocDbService docDbService;
 
