@@ -1951,6 +1951,38 @@ public interface EmulatorConfig {
          */
         @WithDefault("false")
         boolean allowUnsafeHostVolumes();
+
+        EcsTaskRoleCredentialsConfig taskRoleCredentials();
+    }
+
+    interface EcsTaskRoleCredentialsConfig {
+        /**
+         * Opt-in: vends real task-role credentials over the AWS container-credentials wire
+         * contract. Off by default: reaching it from a task container needs a Docker network the
+         * task and Floci both have real access to, which the follow-up wiring this feeds into
+         * establishes; this alone has no way to satisfy it.
+         */
+        @WithDefault("false")
+        boolean enabled();
+
+        /**
+         * Credential lifetime. AWS documents six hours as the default for task-role credentials,
+         * rotated by the agent well before expiry; kept configurable for tests that want a short
+         * TTL without waiting on the real one.
+         */
+        @WithDefault("21600")
+        long ttlSeconds();
+
+        /**
+         * Port on the Floci host serving the credentials endpoint itself. Not the address a task
+         * container talks to: real ECS SDKs hardcode 169.254.170.2, which nothing in Floci's own
+         * process can bind without also owning that address on the task's Docker network. A
+         * follow-up piece launches a small proxy container that holds that address and forwards
+         * to this port, the same way Lambda and ECS containers already reach Floci's other
+         * endpoints over {@code host.docker.internal}.
+         */
+        @WithDefault("51679")
+        int port();
     }
 
     interface ResourceGroupsTaggingServiceConfig {

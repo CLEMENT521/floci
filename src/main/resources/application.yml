@@ -105,6 +105,7 @@ quarkus:
       - --initialize-at-run-time=io.github.hectorvent.floci.services.elb.ElbClassicService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.datasync.DataSyncService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.lambda.launcher.LambdaExecutionRoleCredentials
+      - --initialize-at-run-time=io.github.hectorvent.floci.services.ecs.container.EcsTaskRoleCredentials
       - --initialize-at-run-time=io.github.hectorvent.floci.services.ssoportal.SsoPortalService
       - --initialize-at-run-time=io.github.hectorvent.floci.services.redshift.proxy.S3CopySimulator
       # snappy-java (Firehose Snappy/HADOOP_SNAPPY delivery) extracts and loads a
@@ -542,6 +543,10 @@ floci:
       publish-awsvpc-ports-to-host: false
       host-volume-roots: []
       allow-unsafe-host-volumes: false
+      task-role-credentials:
+        enabled: false
+        ttl-seconds: 21600
+        port: 51679
     appconfig:
       enabled: true
     appconfigdata:
