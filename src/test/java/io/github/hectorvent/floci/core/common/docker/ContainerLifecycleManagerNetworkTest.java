@@ -6,8 +6,12 @@ import com.github.dockerjava.api.command.ConnectToNetworkCmd;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.DisconnectFromNetworkCmd;
+import com.github.dockerjava.api.command.InspectContainerCmd;
+import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.command.RemoveContainerCmd;
+import com.github.dockerjava.api.command.StartContainerCmd;
 import com.github.dockerjava.api.model.ContainerNetwork;
+import com.github.dockerjava.api.model.NetworkSettings;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.services.lambda.launcher.ImageCacheService;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +35,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -122,6 +127,29 @@ class ContainerLifecycleManagerNetworkTest {
 
         verify(disconnectCmd, never()).exec();
         verify(connectCmd, never()).exec();
+    }
+
+    /**
+     * Pins the {@code !spec.hasNetworkConfiguration()} guard in {@code startCreated}: without it,
+     * a container with both published ports and a link-local address would be connected twice,
+     * once by {@code create}'s pre-start attach and again by {@code startCreated}'s post-start
+     * reconnect for port-bound containers (raised in review on #4063).
+     */
+    @Test
+    void createAndStartConnectsOnceForPortsPlusLinkLocalIp() {
+        when(dockerClient.startContainerCmd("container-id")).thenReturn(mock(StartContainerCmd.class));
+        InspectContainerCmd inspectCmd = mock(InspectContainerCmd.class, RETURNS_SELF);
+        InspectContainerResponse inspect = mock(InspectContainerResponse.class);
+        NetworkSettings networkSettings = mock(NetworkSettings.class);
+        when(dockerClient.inspectContainerCmd("container-id")).thenReturn(inspectCmd);
+        when(inspectCmd.exec()).thenReturn(inspect);
+        when(inspect.getNetworkSettings()).thenReturn(networkSettings);
+        when(networkSettings.getPorts()).thenReturn(null);
+
+        manager().createAndStart(specWithLinkLocalIp(Map.of(8080, 18080)));
+
+        verify(connectCmd, times(1)).exec();
+        verify(disconnectCmd, never()).exec();
     }
 
     private ContainerLifecycleManager manager() {
