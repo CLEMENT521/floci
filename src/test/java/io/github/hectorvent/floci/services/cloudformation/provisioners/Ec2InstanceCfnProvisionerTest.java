@@ -62,6 +62,7 @@ class Ec2InstanceCfnProvisionerTest {
         instance.setPrivateDnsName("ip-10-0-0-5.ec2.internal");
         instance.setPublicDnsName("ec2-54-0-0-5.compute-1.amazonaws.com");
         instance.setPlacement(new Placement("us-east-1a"));
+        instance.setVpcId("vpc-1");
         stubLaunch(instance);
         StackResource r = resource("Server");
 
@@ -69,9 +70,10 @@ class Ec2InstanceCfnProvisionerTest {
 
         assertEquals("i-1", r.getPhysicalId());
         assertEquals(Set.of("InstanceId", "PrivateIp", "PublicIp", "PrivateDnsName", "PublicDnsName",
-                "AvailabilityZone"), r.getAttributes().keySet());
+                "AvailabilityZone", "VpcId"), r.getAttributes().keySet());
         assertEquals("10.0.0.5", r.getAttributes().get("PrivateIp"));
         assertEquals("us-east-1a", r.getAttributes().get("AvailabilityZone"));
+        assertEquals("vpc-1", r.getAttributes().get("VpcId"));
         verify(ec2).awaitContainerLaunch(instance);
     }
 

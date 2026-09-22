@@ -301,6 +301,11 @@ public class Ec2InstanceCfnProvisioner implements CfnResourceProvisioner {
         } else {
             r.getAttributes().remove("AvailabilityZone");
         }
+        if (instance.getVpcId() != null) {
+            r.getAttributes().put("VpcId", instance.getVpcId());
+        } else {
+            r.getAttributes().remove("VpcId");
+        }
     }
 
     /** Reconciles the instance tags to the template when the instance is kept in place. */
