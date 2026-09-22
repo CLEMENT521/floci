@@ -106,7 +106,8 @@ public class AwsQueryController {
             "CreateLoginProfile", "GetLoginProfile", "DeleteLoginProfile", "UpdateLoginProfile",
             "GenerateCredentialReport", "GetCredentialReport",
             "GetAccountSummary", "GetAccountAuthorizationDetails",
-            "SimulatePrincipalPolicy"
+            "SimulatePrincipalPolicy", "SimulateCustomPolicy",
+            "GetContextKeysForCustomPolicy", "GetContextKeysForPrincipalPolicy"
     );
 
     private static final Set<String> AUTOSCALING_ACTIONS = Set.of(

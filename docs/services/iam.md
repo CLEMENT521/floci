@@ -292,6 +292,27 @@ name still refers to it after a rename.
 | Action | Description |
 |--------|-------------|
 | SimulatePrincipalPolicy | Evaluates requested actions and resources against the resolved principal's policies. |
+| SimulateCustomPolicy | Evaluates requested actions and resources against a standalone set of policy documents, with an optional permissions boundary. |
+| GetContextKeysForCustomPolicy | Lists the context keys referenced across a set of policy documents. |
+| GetContextKeysForPrincipalPolicy | Lists the context keys referenced across a resolved principal's policies, plus any additional documents supplied. |
+
+`GetContextKeysForCustomPolicy` and `GetContextKeysForPrincipalPolicy` return every Condition
+operator's key, and every `${...}` policy variable found in a Resource pattern or a Condition
+value, in the order statements are found. A variable's default value (`${key, 'default'}`) is
+stripped, and the three single-character escapes (`${*}`, `${?}`, `${$}`) are excluded, since
+they substitute a literal character rather than naming a context key. The list is neither sorted
+nor de-duplicated, matching AWS's own documented
+example response, which repeats a key referenced by more than one statement.
+
+`PolicySourceArn` on `SimulatePrincipalPolicy` and `GetContextKeysForPrincipalPolicy` resolves an IAM
+user or role only, not a group. `SimulateCustomPolicy` accepts only one
+`PermissionsBoundaryPolicyInputList` document, matching AWS's own documented limit; extra documents
+beyond the first are ignored. Neither simulation action evaluates a resource-based policy
+(`ResourcePolicy`) or `OrderedOrganizationPolicyInputList`, and neither returns
+`MatchedStatements`, `ResourceSpecificResults`, or a `PermissionsBoundaryDecisionDetail`: only the
+top-level `EvalDecision` is populated. `ContextEntries.member.N.ContextKeyType` is accepted but not
+read; the comparison is driven entirely by the policy's own condition operator (`Bool`,
+`NumericEquals`, `DateEquals`, and so on), not by the declared type.
 
 ### Account
 
