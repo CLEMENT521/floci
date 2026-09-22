@@ -140,6 +140,7 @@ type.
 | ListInstanceProfilesForRole | Lists instance profiles associated with a role. |
 | TagInstanceProfile | Adds tags to an instance profile. |
 | UntagInstanceProfile | Removes tags from an instance profile. |
+| ListInstanceProfileTags | Lists tags stored for an instance profile. |
 
 ### Access Keys
 

@@ -2633,4 +2633,8 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
         tagKeys.forEach(profile.getTags()::remove);
         instanceProfiles.put(instanceProfileName, profile);
     }
+
+    public Map<String, String> listInstanceProfileTags(String instanceProfileName) {
+        return getInstanceProfile(instanceProfileName).getTags();
+    }
 }

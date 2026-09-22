@@ -102,6 +102,7 @@ public class AwsQueryController {
             "TagUser", "UntagUser", "ListUserTags",
             "TagRole", "UntagRole", "ListRoleTags",
             "TagPolicy", "UntagPolicy", "ListPolicyTags",
+            "TagInstanceProfile", "UntagInstanceProfile", "ListInstanceProfileTags",
             "CreateLoginProfile", "GetLoginProfile", "DeleteLoginProfile", "UpdateLoginProfile",
             "GenerateCredentialReport", "GetCredentialReport",
             "GetAccountSummary", "GetAccountAuthorizationDetails",

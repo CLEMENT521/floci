@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
 /**
@@ -122,6 +123,7 @@ public class IamQueryHandler {
             case "UntagRole" -> handleUntagRole(params);
             case "TagInstanceProfile" -> handleTagInstanceProfile(params);
             case "UntagInstanceProfile" -> handleUntagInstanceProfile(params);
+            case "ListInstanceProfileTags" -> handleListInstanceProfileTags(params);
             case "ListRoleTags" -> handleListRoleTags(params);
 
             // Managed Policies
@@ -1521,5 +1523,14 @@ public class IamQueryHandler {
     private Response handleUntagInstanceProfile(MultivaluedMap<String, String> params) {
         iamService.untagInstanceProfile(getParam(params, "InstanceProfileName"), extractTagKeys(params));
         return Response.ok(AwsQueryResponse.envelopeNoResult("UntagInstanceProfile", AwsNamespaces.IAM)).build();
+    }
+
+    private Response handleListInstanceProfileTags(MultivaluedMap<String, String> params) {
+        String instanceProfileName = getParam(params, "InstanceProfileName");
+        // AWS documents the result as sorted by tag key.
+        Map<String, String> tags = new TreeMap<>(iamService.listInstanceProfileTags(instanceProfileName));
+        String result = new XmlBuilder().start("Tags").raw(tagsXml(tags)).end("Tags")
+                .elem("IsTruncated", false).build();
+        return Response.ok(AwsQueryResponse.envelope("ListInstanceProfileTags", AwsNamespaces.IAM, result)).build();
     }
 }
