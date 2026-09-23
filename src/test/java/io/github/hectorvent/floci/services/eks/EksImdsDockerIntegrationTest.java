@@ -108,7 +108,9 @@ class EksImdsDockerIntegrationTest {
                 .withName("floci-eks-imds-test-" + clusterName)
                 .withPrivileged(true)
                 .withHostDockerInternalOnLinux()
-                .withCmd(List.of("sleep", "300"))
+                // PID 1 gets no default SIGTERM handler, so a bare "sleep 300" sits out the
+                // whole stopAndRemove grace period when @AfterEach tears the container down.
+                .withCmd(List.of("sh", "-c", "trap 'exit 0' TERM; sleep 300 & wait"))
                 .build();
 
         containerId = lifecycleManager.createAndStart(spec).containerId();
