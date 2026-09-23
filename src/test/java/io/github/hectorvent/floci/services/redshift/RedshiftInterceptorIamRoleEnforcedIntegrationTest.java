@@ -3,8 +3,8 @@ package io.github.hectorvent.floci.services.redshift;
 import io.github.hectorvent.floci.services.iam.IamService;
 import io.github.hectorvent.floci.services.redshift.model.Cluster;
 import io.github.hectorvent.floci.services.s3.S3Service;
+import io.github.hectorvent.floci.testing.S3EnforceAuthProfile;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import org.awaitility.Awaitility;
@@ -29,11 +29,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * Covers COPY IAM_ROLE authorization when {@code FLOCI_SERVICES_S3_ENFORCE_AUTH} is on, so the
  * role's identity-based policy actually gates S3 access. Kept in its own {@code @QuarkusTest}
- * class (own {@link EnforceAuthProfile}) because Quarkus restarts the application per distinct
- * test profile; {@link RedshiftInterceptorIntegrationTest} runs with enforcement off.
+ * class (running under {@link S3EnforceAuthProfile}) because Quarkus restarts the application per
+ * distinct test profile; {@link RedshiftInterceptorIntegrationTest} runs with enforcement off.
  */
 @QuarkusTest
-@TestProfile(RedshiftInterceptorIamRoleEnforcedIntegrationTest.EnforceAuthProfile.class)
+@TestProfile(S3EnforceAuthProfile.class)
 class RedshiftInterceptorIamRoleEnforcedIntegrationTest {
 
     private static final String REDSHIFT_TRUST_POLICY = """
@@ -129,13 +129,6 @@ class RedshiftInterceptorIamRoleEnforcedIntegrationTest {
                             + "IAM_ROLE 'arn:aws:iam::000000000000:role/CopyRoleDeny'")) {
                 assertThrows(SQLException.class, copy::execute);
             }
-        }
-    }
-
-    public static final class EnforceAuthProfile implements QuarkusTestProfile {
-        @Override
-        public Map<String, String> getConfigOverrides() {
-            return Map.of("floci.services.s3.enforce-auth", "true");
         }
     }
 }

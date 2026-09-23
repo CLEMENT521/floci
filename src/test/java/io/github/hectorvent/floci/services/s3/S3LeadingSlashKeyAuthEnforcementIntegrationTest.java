@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.s3;
 
+import io.github.hectorvent.floci.testing.S3EnforceAuthProfile;
 import io.github.hectorvent.floci.testutil.S3RequestSigner;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
@@ -47,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * header must be set by hand).
  */
 @QuarkusTest
-@TestProfile(S3AuthEnforcementIntegrationTest.S3AuthProfile.class)
+@TestProfile(S3EnforceAuthProfile.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class S3LeadingSlashKeyAuthEnforcementIntegrationTest {
 

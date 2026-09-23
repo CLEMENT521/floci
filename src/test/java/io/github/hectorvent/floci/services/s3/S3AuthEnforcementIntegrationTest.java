@@ -1,10 +1,10 @@
 package io.github.hectorvent.floci.services.s3;
 
 import io.github.hectorvent.floci.services.iam.IamService;
+import io.github.hectorvent.floci.testing.S3EnforceAuthProfile;
 import io.github.hectorvent.floci.testutil.S3RequestSigner;
 import io.restassured.specification.RequestSpecification;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.MethodOrderer;
@@ -35,7 +35,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 
 @QuarkusTest
-@TestProfile(S3AuthEnforcementIntegrationTest.S3AuthProfile.class)
+@TestProfile(S3EnforceAuthProfile.class)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class S3AuthEnforcementIntegrationTest {
 
@@ -2304,12 +2304,5 @@ class S3AuthEnforcementIntegrationTest {
                   </OutputSerialization>
                 </SelectObjectContentRequest>
                 """;
-    }
-
-    public static final class S3AuthProfile implements QuarkusTestProfile {
-        @Override
-        public Map<String, String> getConfigOverrides() {
-            return Map.of("floci.services.s3.enforce-auth", "true");
-        }
     }
 }
