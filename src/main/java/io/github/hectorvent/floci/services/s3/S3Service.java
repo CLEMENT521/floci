@@ -335,12 +335,7 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     public Bucket createBucket(String bucketName, String region) {
-        if (ACCOUNT_STORAGE_ROOT.equals(bucketName)) {
-            // Floci doesn't otherwise validate bucket name format, but this name must stay
-            // unavailable — it's the root every account's disk storage lives under.
-            throw new AwsException("InvalidBucketName",
-                    "The specified bucket is not valid.", 400);
-        }
+        requirePathSafeBucketName(bucketName);
         var existing = bucketStore.get(bucketName);
         if (existing.isPresent()) {
             Bucket bucket = existing.get();
@@ -392,9 +387,10 @@ public class S3Service implements Resettable, ResourceProvider {
             memoryDataStore.keySet().removeIf(k -> k.startsWith(prefix));
             memoryAnnotationStore.keySet().removeIf(k -> k.startsWith(prefix));
         } else {
-            deleteDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId()).resolve(bucketName));
-            deleteDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId())
-                    .resolve(ANNOTATION_STORAGE_ROOT).resolve(bucketName));
+            deleteDirectory(bucketDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId()),
+                    bucketName));
+            deleteDirectory(bucketDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId())
+                    .resolve(ANNOTATION_STORAGE_ROOT), bucketName));
         }
     }
 
@@ -2363,8 +2359,8 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     private Path resolveAnnotationPath(String bucketName, String key, String versionId, String annotationName) {
-        Path bucketDir = dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId())
-                .resolve(ANNOTATION_STORAGE_ROOT).resolve(bucketName).normalize();
+        Path bucketDir = bucketDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(ownerId())
+                .resolve(ANNOTATION_STORAGE_ROOT), bucketName);
         // Both directory components are SHA-256 hex of our own injective identity (the object key
         // is URL-encoded inside it), so the path is bounded in length, filesystem-safe, and
         // collision-free across object keys that contain '#v#', '@', or path-like characters.
@@ -4697,6 +4693,37 @@ public class S3Service implements Resettable, ResourceProvider {
     // layout. A leading "." keeps this namespace unreachable by any real bucket name.
     private static final String ACCOUNT_STORAGE_ROOT = ".accounts";
 
+    /**
+     * Floci does not hold bucket names to AWS's DNS rules, but a name must still be one directory:
+     * on the disk-backed stores anything else climbs out of the owning account's directory, and
+     * that directory is the account boundary.
+     */
+    private static void requirePathSafeBucketName(String bucketName) {
+        boolean pathSafe = bucketName != null
+                && !bucketName.isBlank()
+                && !bucketName.contains("/")
+                && !bucketName.contains("\\")
+                && bucketName.indexOf('\0') < 0
+                && !".".equals(bucketName)
+                && !"..".equals(bucketName)
+                && !ACCOUNT_STORAGE_ROOT.equals(bucketName);
+        if (!pathSafe) {
+            throw new AwsException("InvalidBucketName", "The specified bucket is not valid.", 400);
+        }
+    }
+
+    /**
+     * One bucket's directory, asserted to sit directly under {@code parent}. Checked on the
+     * resolved path, not the name, so a bucket persisted before the name was refused is caught too.
+     */
+    private static Path bucketDirectory(Path parent, String bucketName) {
+        Path resolved = parent.resolve(bucketName).normalize();
+        if (!parent.normalize().equals(resolved.getParent())) {
+            throw new AwsException("InvalidBucketName", "The specified bucket is not valid.", 400);
+        }
+        return resolved;
+    }
+
     // Unlike bucketStore/objectStore, object bytes get no automatic account prefixing — two
     // accounts can own a bucket named "orders" and would collide here without this scoping.
     private String physicalKey(String bucketName, String key) {
@@ -4720,7 +4747,7 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     private Path resolveObjectPath(String accountId, String bucketName, String key) {
-        Path bucketDir = dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(accountId).resolve(bucketName).normalize();
+        Path bucketDir = bucketDirectory(dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(accountId), bucketName);
 
         String safeKey = key;
         while (safeKey.startsWith("/")) {
@@ -4764,7 +4791,8 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     private Path resolveVersionedPath(String accountId, String bucketName, String key, String versionId) {
-        Path baseDir = dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(accountId).resolve(".versions").resolve(bucketName).normalize();
+        Path baseDir = bucketDirectory(
+                dataRoot.resolve(ACCOUNT_STORAGE_ROOT).resolve(accountId).resolve(".versions"), bucketName);
 
         String safeKey = key;
         while (safeKey.startsWith("/")) {
