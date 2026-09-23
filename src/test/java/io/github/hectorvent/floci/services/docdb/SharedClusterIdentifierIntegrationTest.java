@@ -23,12 +23,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>A live account refuses to create an Aurora cluster named like an existing DocumentDB one with
  * {@code DBClusterAlreadyExistsFault}, and the reverse has to be refused too: two clusters of that
  * name in different stores would share one ARN, and no tag call could say which was meant.
+ *
+ * <p>Neither engine's container is what this is about, so both container layers are mocked:
+ * starting one costs the test about 30 seconds.
  */
 @QuarkusTest
 @TestProfile(RdsAndDocDbMockProfile.class)
 class SharedClusterIdentifierIntegrationTest {
 
-    /** Neither engine's container is what this is about, and starting one costs the test 30s. */
     @Inject
     DocDbService docDbService;
 

@@ -31,7 +31,6 @@ import static org.hamcrest.Matchers.*;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ApiGatewayV2AlbIntegrationTest {
 
-    /** Overrides the default {@code elbv2.mock=true} so the listener actually binds. */
     private static final String AUTH =
             "AWS4-HMAC-SHA256 Credential=test/20260520/us-east-1/elasticloadbalancing/aws4_request";
 
