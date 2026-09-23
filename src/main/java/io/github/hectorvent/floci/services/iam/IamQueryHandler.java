@@ -133,6 +133,7 @@ public class IamQueryHandler {
             case "ListPolicies" -> handleListPolicies(params);
             case "ListEntitiesForPolicy" -> handleListEntitiesForPolicy(params);
             case "GetAccountSummary" -> handleGetAccountSummary(params);
+            case "GetAccountAuthorizationDetails" -> handleGetAccountAuthorizationDetails(params);
             case "CreatePolicyVersion" -> handleCreatePolicyVersion(params);
             case "GetPolicyVersion" -> handleGetPolicyVersion(params);
             case "DeletePolicyVersion" -> handleDeletePolicyVersion(params);
@@ -854,6 +855,137 @@ public class IamQueryHandler {
         return Response.ok(AwsQueryResponse.envelope("GetAccountSummary", AwsNamespaces.IAM, xml.build())).build();
     }
 
+    // Filter, MaxItems and Marker are not honored: every user, group, role and relevant policy
+    // is always returned in one response, matching this handler's general convention elsewhere
+    // (ListInstanceProfiles, SimulatePrincipalPolicy, ...) of not implementing pagination.
+    private Response handleGetAccountAuthorizationDetails(MultivaluedMap<String, String> params) {
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        XmlBuilder xml = new XmlBuilder().start("UserDetailList");
+        for (IamUser user : details.users()) {
+            xml.start("member").raw(userDetailXml(user)).end("member");
+        }
+        xml.end("UserDetailList").start("GroupDetailList");
+        for (IamGroup group : details.groups()) {
+            xml.start("member").raw(groupDetailXml(group)).end("member");
+        }
+        xml.end("GroupDetailList").start("RoleDetailList");
+        for (IamRole role : details.roles()) {
+            xml.start("member").raw(roleDetailXml(role)).end("member");
+        }
+        xml.end("RoleDetailList").start("Policies");
+        for (IamPolicy policy : details.policies()) {
+            xml.start("member")
+               .raw(managedPolicyDetailXml(policy, details.attachmentCounts(), details.permissionsBoundaryUsageCounts()))
+               .end("member");
+        }
+        xml.end("Policies").elem("IsTruncated", false);
+        return Response.ok(AwsQueryResponse.envelope("GetAccountAuthorizationDetails", AwsNamespaces.IAM, xml.build())).build();
+    }
+
+    private String userDetailXml(IamUser u) {
+        XmlBuilder xml = new XmlBuilder()
+                .raw(userXml(u, true))
+                .raw(policyDetailListXml("UserPolicyList", u.getInlinePolicies()))
+                .start("GroupList");
+        for (String groupName : u.getGroupNames()) {
+            xml.elem("member", groupName);
+        }
+        return xml.end("GroupList")
+                .raw(attachedManagedPoliciesXml(iamService.listAttachedUserPolicies(u.getUserName(), null)))
+                .raw(permissionsBoundaryXml(u.getPermissionsBoundaryArn()))
+                .build();
+    }
+
+    private String groupDetailXml(IamGroup g) {
+        return new XmlBuilder()
+                .raw(groupXml(g))
+                .raw(policyDetailListXml("GroupPolicyList", g.getInlinePolicies()))
+                .raw(attachedManagedPoliciesXml(iamService.listAttachedGroupPolicies(g.getGroupName(), null)))
+                .build();
+    }
+
+    // RoleDetail is not the same subset as ListRoles's Role type: it carries
+    // AssumeRolePolicyDocument (which ListRoles also carries) but, per the wire model, never
+    // MaxSessionDuration or Description, so this does not reuse roleXml's general fragment.
+    private String roleDetailXml(IamRole r) {
+        XmlBuilder xml = new XmlBuilder()
+                .elem("Path", r.getPath())
+                .elem("RoleName", r.getRoleName())
+                .elem("RoleId", r.getRoleId())
+                .elem("Arn", r.getArn())
+                .elem("CreateDate", isoDate(r.getCreateDate()))
+                .elem("AssumeRolePolicyDocument", r.getAssumeRolePolicyDocument())
+                .raw(tagsElement(r.getTags()))
+                .start("InstanceProfileList");
+        for (InstanceProfile profile : iamService.listInstanceProfilesForRole(r.getRoleName())) {
+            xml.start("member").raw(instanceProfileXml(profile, true)).end("member");
+        }
+        return xml.end("InstanceProfileList")
+                .raw(policyDetailListXml("RolePolicyList", r.getInlinePolicies()))
+                .raw(attachedManagedPoliciesXml(iamService.listAttachedRolePolicies(r.getRoleName(), null)))
+                .raw(permissionsBoundaryXml(r.getPermissionsBoundaryArn()))
+                .build();
+    }
+
+    // AttachmentCount and PermissionsBoundaryUsageCount come from the caller's account-scoped
+    // scan (see IamService.getAccountAuthorizationDetails), not IamPolicy.getAttachmentCount():
+    // for an AWS-managed policy that field is shared process-wide across every account.
+    private String managedPolicyDetailXml(IamPolicy p, Map<String, Integer> attachmentCounts,
+                                           Map<String, Integer> permissionsBoundaryUsageCounts) {
+        XmlBuilder xml = new XmlBuilder()
+                .elem("PolicyName", p.getPolicyName())
+                .elem("PolicyId", p.getPolicyId())
+                .elem("Arn", p.getArn())
+                .elem("Path", p.getPath())
+                .elem("DefaultVersionId", p.getDefaultVersionId())
+                .elem("AttachmentCount", (long) attachmentCounts.getOrDefault(p.getArn(), 0))
+                .elem("PermissionsBoundaryUsageCount",
+                        (long) permissionsBoundaryUsageCounts.getOrDefault(p.getArn(), 0))
+                .elem("IsAttachable", true)
+                .elem("Description", p.getDescription())
+                .elem("CreateDate", isoDate(p.getCreateDate()))
+                .elem("UpdateDate", isoDate(p.getUpdateDate()))
+                .start("PolicyVersionList");
+        for (PolicyVersion version : p.getVersions().values()) {
+            xml.start("member").raw(policyVersionXml(version)).end("member");
+        }
+        return xml.end("PolicyVersionList").build();
+    }
+
+    private String policyDetailListXml(String wrapperName, Map<String, String> inlinePolicies) {
+        XmlBuilder xml = new XmlBuilder().start(wrapperName);
+        for (Map.Entry<String, String> entry : inlinePolicies.entrySet()) {
+            xml.start("member")
+               .elem("PolicyName", entry.getKey())
+               .elem("PolicyDocument", entry.getValue())
+               .end("member");
+        }
+        return xml.end(wrapperName).build();
+    }
+
+    private String attachedManagedPoliciesXml(List<IamPolicy> attached) {
+        XmlBuilder xml = new XmlBuilder().start("AttachedManagedPolicies");
+        for (IamPolicy p : attached) {
+            xml.start("member")
+               .elem("PolicyName", p.getPolicyName())
+               .elem("PolicyArn", p.getArn())
+               .end("member");
+        }
+        return xml.end("AttachedManagedPolicies").build();
+    }
+
+    private String permissionsBoundaryXml(String boundaryArn) {
+        if (boundaryArn == null) {
+            return "";
+        }
+        return new XmlBuilder().start("PermissionsBoundary")
+                .elem("PermissionsBoundaryType", "Policy")
+                .elem("PermissionsBoundaryArn", boundaryArn)
+                .end("PermissionsBoundary")
+                .build();
+    }
+
     private Response handleCreatePolicyVersion(MultivaluedMap<String, String> params) {
         String policyArn = getParam(params, "PolicyArn");
         String document = getParam(params, "PolicyDocument");
@@ -1159,15 +1291,20 @@ public class IamQueryHandler {
     // =========================================================================
 
     private Response handleCreateInstanceProfile(MultivaluedMap<String, String> params) {
+        Map<String, String> tags = extractTags(params);
         InstanceProfile profile = iamService.createInstanceProfile(
                 getParam(params, "InstanceProfileName"), getParam(params, "Path"));
-        String result = new XmlBuilder().start("InstanceProfile").raw(instanceProfileXml(profile)).end("InstanceProfile").build();
+        if (!tags.isEmpty()) {
+            iamService.tagInstanceProfile(profile.getInstanceProfileName(), tags);
+            profile = iamService.getInstanceProfile(profile.getInstanceProfileName());
+        }
+        String result = new XmlBuilder().start("InstanceProfile").raw(instanceProfileXml(profile, true)).end("InstanceProfile").build();
         return Response.ok(AwsQueryResponse.envelope("CreateInstanceProfile", AwsNamespaces.IAM, result)).build();
     }
 
     private Response handleGetInstanceProfile(MultivaluedMap<String, String> params) {
         InstanceProfile profile = iamService.getInstanceProfile(getParam(params, "InstanceProfileName"));
-        String result = new XmlBuilder().start("InstanceProfile").raw(instanceProfileXml(profile)).end("InstanceProfile").build();
+        String result = new XmlBuilder().start("InstanceProfile").raw(instanceProfileXml(profile, true)).end("InstanceProfile").build();
         return Response.ok(AwsQueryResponse.envelope("GetInstanceProfile", AwsNamespaces.IAM, result)).build();
     }
 
@@ -1180,7 +1317,8 @@ public class IamQueryHandler {
         List<InstanceProfile> profiles = iamService.listInstanceProfiles(getParam(params, "PathPrefix"));
         var xml = new XmlBuilder().start("InstanceProfiles");
         for (InstanceProfile p : profiles) {
-            xml.start("member").raw(instanceProfileXml(p)).end("member");
+            // Documented listing subset: tags are omitted here, unlike GetInstanceProfile.
+            xml.start("member").raw(instanceProfileXml(p, false)).end("member");
         }
         xml.end("InstanceProfiles").elem("IsTruncated", false);
         return Response.ok(AwsQueryResponse.envelope("ListInstanceProfiles", AwsNamespaces.IAM, xml.build())).build();
@@ -1200,7 +1338,7 @@ public class IamQueryHandler {
         List<InstanceProfile> profiles = iamService.listInstanceProfilesForRole(getParam(params, "RoleName"));
         var xml = new XmlBuilder().start("InstanceProfiles");
         for (InstanceProfile p : profiles) {
-            xml.start("member").raw(instanceProfileXml(p)).end("member");
+            xml.start("member").raw(instanceProfileXml(p, true)).end("member");
         }
         xml.end("InstanceProfiles").elem("IsTruncated", false);
         return Response.ok(AwsQueryResponse.envelope("ListInstanceProfilesForRole", AwsNamespaces.IAM, xml.build())).build();
@@ -1425,7 +1563,13 @@ public class IamQueryHandler {
         return xml.elem("CreateDate", isoDate(k.getCreateDate())).build();
     }
 
-    private String instanceProfileXml(InstanceProfile p) {
+    // detailed is per-operation, not per-profile, mirroring roleXml/userXml/policyXml:
+    // ListInstanceProfiles documents itself as a listing subset ("this operation does not
+    // return tags, even though they are an attribute of the returned object"), the same note
+    // ListRoles carries. GetInstanceProfile, CreateInstanceProfile, ListInstanceProfilesForRole
+    // and the InstanceProfileList embedded in GetAccountAuthorizationDetails's RoleDetail carry
+    // no such note, so they stay detailed.
+    private String instanceProfileXml(InstanceProfile p, boolean detailed) {
         var xml = new XmlBuilder()
                 .elem("InstanceProfileName", p.getInstanceProfileName())
                 .elem("InstanceProfileId", p.getInstanceProfileId())
@@ -1439,7 +1583,8 @@ public class IamQueryHandler {
                 xml.start("member").raw(roleXml(role, false)).end("member");
             } catch (AwsException ignored) {}
         }
-        return xml.end("Roles").build();
+        xml.end("Roles");
+        return xml.raw(detailed ? tagsElement(p.getTags()) : "").build();
     }
 
     private String attachedPoliciesXml(List<IamPolicy> policyList) {

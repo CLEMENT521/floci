@@ -1953,4 +1953,106 @@ class IamServiceTest {
         iamService.createAccountAlias("a".repeat(63));
         assertEquals("a".repeat(63), iamService.getAccountAlias().orElseThrow());
     }
+
+    // =========================================================================
+    // GetAccountAuthorizationDetails
+    // =========================================================================
+
+    @Test
+    void accountAuthorizationDetailsAlwaysIncludesLocalPoliciesEvenUnattached() {
+        IamPolicy unattached = iamService.createPolicy("aad-unattached", "/", null,
+                "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}]}",
+                null);
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertTrue(details.policies().stream().anyMatch(p -> p.getArn().equals(unattached.getArn())));
+    }
+
+    @Test
+    void accountAuthorizationDetailsExcludesAnAwsManagedPolicyNotAttachedToAnything() {
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        // A freshly constructed IamService has attached nothing, so a well-known AWS-managed
+        // policy this test never touches must not appear.
+        assertTrue(details.policies().stream()
+                .noneMatch(p -> p.getArn().equals("arn:aws:iam::aws:policy/AdministratorAccess")));
+    }
+
+    @Test
+    void accountAuthorizationDetailsIncludesAnAwsManagedPolicyOnceAttachedToAUser() {
+        iamService.createUser("aad-user", "/");
+        iamService.attachUserPolicy("aad-user", "arn:aws:iam::aws:policy/AdministratorAccess");
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertTrue(details.policies().stream()
+                .anyMatch(p -> p.getArn().equals("arn:aws:iam::aws:policy/AdministratorAccess")));
+    }
+
+    /**
+     * AttachmentCount is computed by scanning this account's own users, groups and roles, not
+     * read off {@code IamPolicy.getAttachmentCount()}: for an AWS-managed policy that field is
+     * shared process-wide across every {@code IamService} instance's account, so a second,
+     * independent instance attaching the same ARN must not change what this instance reports.
+     */
+    @Test
+    void attachmentCountIsScopedToThisAccountNotTheSharedAwsManagedPolicyObject() {
+        String arn = "arn:aws:iam::aws:policy/AdministratorAccess";
+        iamService.createUser("aad-scoped-user", "/");
+        iamService.attachUserPolicy("aad-scoped-user", arn);
+
+        IamService other = iamService(false);
+        other.createUser("other-account-user", "/");
+        other.attachUserPolicy("other-account-user", arn);
+        other.createUser("other-account-user-2", "/");
+        other.attachUserPolicy("other-account-user-2", arn);
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertEquals(1, details.attachmentCounts().get(arn));
+    }
+
+    @Test
+    void attachmentCountTalliesAcrossUsersGroupsAndRoles() {
+        String arn = "arn:aws:iam::aws:policy/ReadOnlyAccess";
+        iamService.createUser("aad-tally-user", "/");
+        iamService.attachUserPolicy("aad-tally-user", arn);
+        iamService.createGroup("aad-tally-group", "/");
+        iamService.attachGroupPolicy("aad-tally-group", arn);
+        iamService.createRole("aad-tally-role", "/", "{}", null, 0, null);
+        iamService.attachRolePolicy("aad-tally-role", arn);
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertEquals(3, details.attachmentCounts().get(arn));
+    }
+
+    @Test
+    void permissionsBoundaryUsageCountTalliesAcrossUsersAndRoles() {
+        IamPolicy boundary = iamService.createPolicy("aad-boundary", "/", null,
+                "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}]}",
+                null);
+        iamService.createUser("aad-boundary-user", "/");
+        iamService.putUserPermissionsBoundary("aad-boundary-user", boundary.getArn());
+        iamService.createRole("aad-boundary-role", "/", "{}", null, 0, null);
+        iamService.putRolePermissionsBoundary("aad-boundary-role", boundary.getArn());
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertEquals(2, details.permissionsBoundaryUsageCounts().get(boundary.getArn()));
+    }
+
+    @Test
+    void accountAuthorizationDetailsListsEveryUserGroupAndRole() {
+        iamService.createUser("aad-list-user", "/");
+        iamService.createGroup("aad-list-group", "/");
+        iamService.createRole("aad-list-role", "/", "{}", null, 0, null);
+
+        IamService.AccountAuthorizationDetails details = iamService.getAccountAuthorizationDetails();
+
+        assertTrue(details.users().stream().anyMatch(u -> u.getUserName().equals("aad-list-user")));
+        assertTrue(details.groups().stream().anyMatch(g -> g.getGroupName().equals("aad-list-group")));
+        assertTrue(details.roles().stream().anyMatch(r -> r.getRoleName().equals("aad-list-role")));
+    }
 }

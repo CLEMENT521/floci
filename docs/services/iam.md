@@ -131,7 +131,7 @@ type.
 
 | Action | Description |
 |--------|-------------|
-| CreateInstanceProfile | Creates an IAM instance profile. |
+| CreateInstanceProfile | Creates an IAM instance profile, applying any `Tags` given at creation. |
 | GetInstanceProfile | Returns an instance profile and its roles. |
 | DeleteInstanceProfile | Deletes an instance profile from the local IAM store. |
 | ListInstanceProfiles | Lists IAM instance profiles. |
@@ -141,6 +141,13 @@ type.
 | TagInstanceProfile | Adds tags to an instance profile. |
 | UntagInstanceProfile | Removes tags from an instance profile. |
 | ListInstanceProfileTags | Lists tags stored for an instance profile. |
+
+`CreateInstanceProfile`, `GetInstanceProfile` and `ListInstanceProfilesForRole` include an instance
+profile's own tags inline. `ListInstanceProfiles` omits them: like `ListRoles`, its own operation
+documentation says "this operation does not return tags, even though they are an attribute of the
+returned object", even though the `InstanceProfile` shape itself carries no such exclusion note.
+Tags on a role embedded in `InstanceProfileList` are always omitted, matching `GetInstanceProfile`'s
+own documented role subset.
 
 ### Access Keys
 
@@ -319,6 +326,16 @@ read; the comparison is driven entirely by the policy's own condition operator (
 | Action | Description |
 |--------|-------------|
 | GetAccountSummary | Returns entity counts (users, groups, roles, customer-managed policies, instance profiles) and IAM quota values. `Providers` counts OIDC providers only; SAML providers are not included. Resources Floci does not track (MFA devices, server certificates) are reported as zero rather than omitted. |
+| GetAccountAuthorizationDetails | Returns every user, group and role in the account, and the policies relevant to them: every local (customer-managed) policy, and every AWS-managed policy actually attached to or used as a permissions boundary by something in the account. |
+
+`Filter`, `MaxItems` and `Marker` are not honored: the response always includes everything, with
+`IsTruncated` always `false`. `AttachmentCount` and `PermissionsBoundaryUsageCount` are computed by
+scanning the account's own users, groups and roles rather than read off a stored counter, so they
+are correctly scoped to the calling account even for an AWS-managed policy (see the note on
+`IamService.getAccountAuthorizationDetails` for why that distinction matters). Policy documents are
+returned as plain JSON, not URL-encoded as AWS documents them; this matches every other IAM action
+that returns a policy document (`GetPolicyVersion`, `GetRolePolicy`, and so on), none of which
+URL-encode either.
 
 ### Organizations Root Access
 

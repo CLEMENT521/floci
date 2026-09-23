@@ -41,6 +41,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -2717,5 +2718,82 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
 
     public Map<String, String> listInstanceProfileTags(String instanceProfileName) {
         return getInstanceProfile(instanceProfileName).getTags();
+    }
+
+    /**
+     * Every user, group and role in the account, plus the policies relevant to them: every
+     * local (customer-managed) policy, and every AWS-managed policy actually attached to or
+     * used as a boundary by something in the account. Backs GetAccountAuthorizationDetails.
+     *
+     * <p>{@code attachmentCounts} and {@code permissionsBoundaryUsageCounts} are computed by
+     * scanning this account's own users, groups and roles, not read off {@link
+     * IamPolicy#getAttachmentCount()}. For an AWS-managed policy that field is shared process-wide
+     * across every account (see {@link #awsManagedPolicies}), so trusting it here would leak one
+     * account's attachments into another's response. A local policy's own counter is already
+     * account-scoped and would agree with this scan; computing it uniformly for both avoids
+     * special-casing and keeps this method independent of that stored field either way.
+     */
+    public AccountAuthorizationDetails getAccountAuthorizationDetails() {
+        List<IamUser> allUsers = listUsers(null);
+        List<IamGroup> allGroups = listGroups(null);
+        List<IamRole> allRoles = listRoles(null);
+
+        Map<String, Integer> attachmentCounts = new LinkedHashMap<>();
+        Map<String, Integer> boundaryUsageCounts = new LinkedHashMap<>();
+        Set<String> referencedAwsManagedArns = new LinkedHashSet<>();
+
+        for (IamUser user : allUsers) {
+            tallyAttachments(user.getAttachedPolicyArns(), attachmentCounts, referencedAwsManagedArns);
+            tallyBoundaryUsage(user.getPermissionsBoundaryArn(), boundaryUsageCounts, referencedAwsManagedArns);
+        }
+        for (IamGroup group : allGroups) {
+            tallyAttachments(group.getAttachedPolicyArns(), attachmentCounts, referencedAwsManagedArns);
+        }
+        for (IamRole role : allRoles) {
+            tallyAttachments(role.getAttachedPolicyArns(), attachmentCounts, referencedAwsManagedArns);
+            tallyBoundaryUsage(role.getPermissionsBoundaryArn(), boundaryUsageCounts, referencedAwsManagedArns);
+        }
+
+        List<IamPolicy> allPolicies = new ArrayList<>(listPolicies("Local", null));
+        for (String arn : referencedAwsManagedArns) {
+            allPolicies.add(getPolicy(arn));
+        }
+
+        return new AccountAuthorizationDetails(
+                allUsers, allGroups, allRoles, allPolicies, attachmentCounts, boundaryUsageCounts);
+    }
+
+    private void tallyAttachments(List<String> attachedPolicyArns, Map<String, Integer> attachmentCounts,
+                                   Set<String> referencedAwsManagedArns) {
+        for (String arn : attachedPolicyArns) {
+            attachmentCounts.merge(arn, 1, Integer::sum);
+            if (arn.startsWith(AwsManagedPolicies.ARN_PREFIX)) {
+                referencedAwsManagedArns.add(arn);
+            }
+        }
+    }
+
+    private void tallyBoundaryUsage(String permissionsBoundaryArn, Map<String, Integer> boundaryUsageCounts,
+                                     Set<String> referencedAwsManagedArns) {
+        if (permissionsBoundaryArn == null) {
+            return;
+        }
+        boundaryUsageCounts.merge(permissionsBoundaryArn, 1, Integer::sum);
+        if (permissionsBoundaryArn.startsWith(AwsManagedPolicies.ARN_PREFIX)) {
+            referencedAwsManagedArns.add(permissionsBoundaryArn);
+        }
+    }
+
+    /**
+     * @param attachmentCounts arn -> number of users, groups and roles it is attached to
+     * @param permissionsBoundaryUsageCounts arn -> number of users and roles using it as a boundary
+     */
+    public record AccountAuthorizationDetails(
+            List<IamUser> users,
+            List<IamGroup> groups,
+            List<IamRole> roles,
+            List<IamPolicy> policies,
+            Map<String, Integer> attachmentCounts,
+            Map<String, Integer> permissionsBoundaryUsageCounts) {
     }
 }
