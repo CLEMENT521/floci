@@ -73,6 +73,16 @@ public interface EmulatorConfig {
      */
     interface PartitionsConfig {
         Optional<String> id();
+
+        /**
+         * Accept a request whose SigV4 credential scope names a region that no partition
+         * publishes or admits by its region pattern ({@code polygondwanaland-west-1}). Refused by
+         * default, as moto ({@code MOTO_ALLOW_NONEXISTENT_REGION}) and LocalStack
+         * ({@code ALLOW_NONSTANDARD_REGIONS}) do, because on AWS such a request never resolves a
+         * host; set this to give every label its own region namespace, as Floci did before.
+         */
+        @WithDefault("false")
+        boolean allowUnknownRegions();
     }
 
     /**
