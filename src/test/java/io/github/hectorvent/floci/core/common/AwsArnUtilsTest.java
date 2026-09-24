@@ -160,6 +160,22 @@ class AwsArnUtilsTest {
         PartitionMatrix.assertGlobalArnIn(partitionCase, arn.toString());
     }
 
+    @ParameterizedTest
+    @MethodSource("io.github.hectorvent.floci.testing.PartitionMatrix#cases")
+    void resourceIfArnForYieldsTheResourceTailInEveryPartition(PartitionCase partitionCase) {
+        String prefix = "arn:" + partitionCase.partition() + ":s3:::";
+        assertEquals("bucket/key", AwsArnUtils.resourceIfArnFor(prefix + "bucket/key", "s3").orElseThrow());
+        assertEquals("", AwsArnUtils.resourceIfArnFor(prefix, "s3").orElseThrow());
+        assertTrue(AwsArnUtils.resourceIfArnFor(prefix + "bucket", "sqs").isEmpty());
+    }
+
+    @Test
+    void resourceIfArnForIsEmptyForNonArns() {
+        assertTrue(AwsArnUtils.resourceIfArnFor(null, "s3").isEmpty());
+        assertTrue(AwsArnUtils.resourceIfArnFor("bucket", "s3").isEmpty());
+        assertTrue(AwsArnUtils.resourceIfArnFor("arn:aws:s3", "s3").isEmpty());
+    }
+
     @Test
     void aPseudoRegionResolvesToItsPartitionWhenMinting() {
         assertEquals("arn:aws-cn:sqs:aws-cn-global:000000000000:q",

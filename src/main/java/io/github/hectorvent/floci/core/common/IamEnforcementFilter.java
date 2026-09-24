@@ -553,11 +553,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     /** Returns [bucket, key] (key may be null if the resource is a bucket-level ARN). */
     // Package-private for unit testing.
     static String[] parseS3Resource(String resource) {
-        if (resource == null || !resource.startsWith("arn:aws:s3:::")) {
-            return new String[] { null, null };
-        }
-        String tail = resource.substring("arn:aws:s3:::".length());
-        if (tail.isEmpty() || "*".equals(tail)) {
+        String tail = AwsArnUtils.resourceIfArnFor(resource, "s3").orElse(null);
+        if (tail == null || tail.isEmpty() || "*".equals(tail)) {
             return new String[] { null, null };
         }
         int slash = tail.indexOf('/');
@@ -634,11 +631,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     }
 
     private static String formatS3ResourcePath(String resourceArn) {
-        if (resourceArn == null || !resourceArn.startsWith("arn:aws:s3:::")) {
-            return null;
-        }
-        String tail = resourceArn.substring("arn:aws:s3:::".length());
-        if (tail.isEmpty() || "*".equals(tail)) {
+        String tail = AwsArnUtils.resourceIfArnFor(resourceArn, "s3").orElse(null);
+        if (tail == null || tail.isEmpty() || "*".equals(tail)) {
             return null;
         }
         return "/" + tail;

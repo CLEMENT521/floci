@@ -1,5 +1,7 @@
 package io.github.hectorvent.floci.core.common;
 
+import java.util.Optional;
+
 public final class AwsArnUtils {
 
     private AwsArnUtils() {}
@@ -137,6 +139,19 @@ public final class AwsArnUtils {
      */
     public static boolean isArnFor(String value, String service) {
         return isArn(value) && value.split(":", 6)[2].equals(service);
+    }
+
+    /**
+     * The resource segment of {@code value} when it is an ARN naming {@code service} in any
+     * partition, e.g. {@code bucket/key} for {@code arn:aws-cn:s3:::bucket/key}; empty otherwise.
+     * The partition-tolerant replacement for {@code startsWith("arn:aws:s3:::")} followed by a
+     * {@code substring} of that literal's length.
+     */
+    public static Optional<String> resourceIfArnFor(String value, String service) {
+        if (!isArnFor(value, service)) {
+            return Optional.empty();
+        }
+        return Optional.of(value.split(":", 6)[5]);
     }
 
     /**
