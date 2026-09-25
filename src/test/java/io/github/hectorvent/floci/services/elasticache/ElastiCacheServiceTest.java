@@ -18,6 +18,7 @@ import io.github.hectorvent.floci.services.elasticache.model.CacheCluster;
 import io.github.hectorvent.floci.services.elasticache.model.CacheClusterStatus;
 import io.github.hectorvent.floci.services.elasticache.model.ClusterNode;
 import io.github.hectorvent.floci.services.elasticache.model.Endpoint;
+import io.github.hectorvent.floci.services.elasticache.model.ElastiCacheUserGroup;
 import io.github.hectorvent.floci.services.elasticache.model.ReplicationGroup;
 import io.github.hectorvent.floci.services.elasticache.model.ReplicationGroupSettings;
 import io.github.hectorvent.floci.services.elasticache.model.ReplicationGroupStatus;
@@ -33,6 +34,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -182,6 +184,97 @@ class ElastiCacheServiceTest {
     }
 
     @Test
+    void userGroupMembersAuthenticateAndMembershipChangesApplyAtOnce() {
+        service.createReplicationGroup("grp", "test", AuthMode.PASSWORD, null, "us-east-1");
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUser("app-user-id", "app", AuthMode.PASSWORD,
+                List.of("app-pass"), "on ~* +@all", null);
+        ElastiCacheUserGroup userGroup = service.createUserGroup("App-Group", "redis",
+                List.of("default-user-id", "app-user-id"));
+        assertEquals("app-group", userGroup.getUserGroupId());
+
+        service.modifyReplicationGroup("grp", List.of("App-Group"), null);
+        ReplicationGroup group = service.getReplicationGroup("grp");
+        assertEquals(Set.of("app-group"), group.getUserGroupIds());
+        assertTrue(group.getAssociatedUserIds().isEmpty());
+        assertTrue(service.validatePassword("grp", "app", "app-pass"));
+        assertTrue(service.validatePassword("grp", null, "default-pass"));
+
+        service.modifyUserGroup("app-group", null, List.of("app-user-id"), null);
+        assertFalse(service.validatePassword("grp", "app", "app-pass"));
+        service.modifyUserGroup("app-group", List.of("app-user-id"), null, null);
+        assertTrue(service.validatePassword("grp", "app", "app-pass"));
+
+        AwsException inUse = assertThrows(AwsException.class, () -> service.deleteUserGroup("app-group"));
+        assertEquals("InvalidUserGroupState", inUse.getErrorCode());
+
+        service.modifyReplicationGroup("grp", null, List.of("app-group"));
+        assertFalse(service.validatePassword("grp", "app", "app-pass"));
+        service.deleteUserGroup("app-group");
+        assertEquals("UserGroupNotFound",
+                assertThrows(AwsException.class, () -> service.getUserGroup("app-group")).getErrorCode());
+    }
+
+    @Test
+    void userGroupNeedsInTransitEncryptionOnTheReplicationGroup() {
+        service.createReplicationGroup("open", "test", AuthMode.NO_AUTH, null, "us-east-1");
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUserGroup("grp-users", "redis", List.of("default-user-id"));
+
+        AwsException refused = assertThrows(AwsException.class,
+                () -> service.modifyReplicationGroup("open", List.of("grp-users"), null));
+        assertEquals("InvalidParameterCombination", refused.getErrorCode());
+        assertTrue(service.getReplicationGroup("open").getUserGroupIds().isEmpty());
+    }
+
+    @Test
+    void createReplicationGroupRejectsAnUnknownUserGroupBeforeProvisioning() {
+        ElastiCacheService.CreateReplicationGroupRequest request = new ElastiCacheService.CreateReplicationGroupRequest(
+                "grp", "test", AuthMode.IAM, null, "us-east-1", "redis", null, null, null, null, null,
+                null, null, null, null, null, null, ReplicationGroupSettings.defaults(), Map.of(),
+                List.of("missing-group"));
+
+        AwsException refused = assertThrows(AwsException.class, () -> service.createReplicationGroup(request));
+
+        assertEquals("UserGroupNotFound", refused.getErrorCode());
+        verify(containerManager, never()).tryStart(anyString(), anyString());
+    }
+
+    @Test
+    void userGroupMembershipFollowsAwsRules() {
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUser("second-default-id", "default", AuthMode.PASSWORD,
+                List.of("other-pass"), "on ~* +@all", null);
+        service.createUser("app-user-id", "app", AuthMode.PASSWORD,
+                List.of("app-pass"), "on ~* +@all", null);
+        service.createUser("valkey-user-id", "vk", AuthMode.PASSWORD,
+                List.of("vk-pass"), "on ~* +@all", "valkey");
+        service.createUser("open-user-id", "open", AuthMode.NO_AUTH, List.of(), "on ~* +@all", null);
+
+        assertEquals("DefaultUserRequired", assertThrows(AwsException.class,
+                () -> service.createUserGroup("no-default", "redis", List.of("app-user-id"))).getErrorCode());
+        assertEquals("DuplicateUserName", assertThrows(AwsException.class,
+                () -> service.createUserGroup("two-defaults", "redis",
+                        List.of("default-user-id", "second-default-id"))).getErrorCode());
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> service.createUserGroup("mixed", "redis",
+                        List.of("default-user-id", "valkey-user-id"))).getErrorCode());
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> service.createUserGroup("vk-open", "valkey", List.of("open-user-id"))).getErrorCode());
+
+        // a valkey user group needs no default user
+        service.createUserGroup("vk-group", "valkey", List.of("valkey-user-id", "app-user-id"));
+        assertEquals("UserGroupAlreadyExists", assertThrows(AwsException.class,
+                () -> service.createUserGroup("VK-Group", "valkey", List.of("valkey-user-id"))).getErrorCode());
+
+        service.deleteUser("app-user-id");
+        assertEquals(Set.of("valkey-user-id"), service.getUserGroup("vk-group").getUserIds());
+    }
+
+    @Test
     void singleArgAuthFallsBackToGroupAuthToken() {
         service.createReplicationGroup("grp", "test", AuthMode.PASSWORD, "group-token", "us-east-1");
 
@@ -247,14 +340,14 @@ class ElastiCacheServiceTest {
         return new ElastiCacheService.CreateReplicationGroupRequest(groupId, "test",
                 AuthMode.NO_AUTH, null, "us-east-1", "valkey", "8.2", "cache.t4g.micro",
                 "default.valkey8.cluster.on", null, null, numNodeGroups, replicasPerNodeGroup,
-                null, true, null, null, ReplicationGroupSettings.defaults(), Map.of());
+                null, true, null, null, ReplicationGroupSettings.defaults(), Map.of(), null);
     }
 
     private static ElastiCacheService.CreateReplicationGroupRequest singleNodeRequest(
             String groupId, Integer port) {
         return new ElastiCacheService.CreateReplicationGroupRequest(groupId, "test",
                 AuthMode.NO_AUTH, null, "us-east-1", null, null, null, null, null, null,
-                null, null, null, null, null, port, ReplicationGroupSettings.defaults(), Map.of());
+                null, null, null, null, null, port, ReplicationGroupSettings.defaults(), Map.of(), null);
     }
 
     // botocore models Port as an optional input on CreateReplicationGroup ("the port number on
@@ -320,7 +413,7 @@ class ElastiCacheServiceTest {
                 new ElastiCacheService.CreateReplicationGroupRequest("grp", "test",
                         AuthMode.NO_AUTH, null, "us-east-1", "valkey", "8.2", "cache.t4g.micro",
                         "default.valkey8.cluster.on", null, null, 2, 1,
-                        null, true, null, 16390, ReplicationGroupSettings.defaults(), Map.of()));
+                        null, true, null, 16390, ReplicationGroupSettings.defaults(), Map.of(), null));
 
         assertEquals(16390, group.getConfigurationEndpoint().port());
         assertEquals(16390, group.getClusterNodes().getFirst().getProxyPort());
@@ -873,10 +966,10 @@ class ElastiCacheServiceTest {
         assertEquals("01:00-02:00", service.getReplicationGroup("g1").getSnapshotWindow());
 
         // a refusal later in the same request must not leave the earlier part applied: the store
-        // hands out its own object, so settings applied before the user check would stay visible
-        AwsException unknownUser = assertThrows(AwsException.class, () -> service.modifyReplicationGroup(
-                "g1", List.of("no-such-user"), null, new ReplicationGroupSettings(null, null, 9, "03:00-04:00")));
-        assertEquals("UserNotFoundFault", unknownUser.getErrorCode());
+        // hands out its own object, so settings applied before the user group check would stay visible
+        AwsException unknownUserGroup = assertThrows(AwsException.class, () -> service.modifyReplicationGroup(
+                "g1", List.of("no-such-user-group"), null, new ReplicationGroupSettings(null, null, 9, "03:00-04:00")));
+        assertEquals("UserGroupNotFound", unknownUserGroup.getErrorCode());
         assertEquals(3, service.getReplicationGroup("g1").getSnapshotRetentionLimit());
         assertEquals("01:00-02:00", service.getReplicationGroup("g1").getSnapshotWindow());
     }
@@ -929,7 +1022,7 @@ class ElastiCacheServiceTest {
         return new ElastiCacheService.CreateReplicationGroupRequest(groupId, "test",
                 AuthMode.NO_AUTH, null, "us-east-1", null, null, null,
                 parameterGroupName, null, null, null, null,
-                null, null, null, null, ReplicationGroupSettings.defaults(), Map.of());
+                null, null, null, null, ReplicationGroupSettings.defaults(), Map.of(), null);
     }
 
     @Test
