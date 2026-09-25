@@ -40,6 +40,11 @@ public class SecretsManagerCfnProvisioner implements CfnResourceProvisioner {
     private static final String NAME_MODE_GENERATED = "generated";
     /** The GenerateSecretString configuration the current value was generated from, so only a change regenerates. */
     private static final String GENERATE_IDENTITY_ATTR = "FlociSecretGenerateIdentity";
+    /**
+     * Recorded when the value did not come from GenerateSecretString, so a later switch to it is a
+     * change that generates. An absent attribute means a record from before this was tracked.
+     */
+    private static final String GENERATE_IDENTITY_NONE = "none";
     private static final int GENERATED_NAME_SUFFIX_LENGTH = 12;
 
     private static final Logger LOG = Logger.getLogger(SecretsManagerCfnProvisioner.class);
@@ -127,11 +132,8 @@ public class SecretsManagerCfnProvisioner implements CfnResourceProvisioner {
         r.getAttributes().put("Arn", secret.getArn());
         r.getAttributes().put("Name", name);
         r.getAttributes().put(NAME_MODE_ATTR, hasExplicitName ? NAME_MODE_EXPLICIT : NAME_MODE_GENERATED);
-        if (generateIdentity != null) {
-            r.getAttributes().put(GENERATE_IDENTITY_ATTR, generateIdentity);
-        } else {
-            r.getAttributes().remove(GENERATE_IDENTITY_ATTR);
-        }
+        r.getAttributes().put(GENERATE_IDENTITY_ATTR,
+                generateIdentity != null ? generateIdentity : GENERATE_IDENTITY_NONE);
     }
 
     /** The resolved {@code GenerateSecretString} object, or null when the template has none. */

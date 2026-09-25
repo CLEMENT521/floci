@@ -176,6 +176,29 @@ class SecretsManagerCfnProvisionerTest {
         assertEquals(props.get("GenerateSecretString").toString(), r.getAttributes().get("FlociSecretGenerateIdentity"));
     }
 
+    /** Switching from SecretString to GenerateSecretString is a change: the update generates a new value. */
+    @Test
+    void switchingFromSecretStringToGenerateGeneratesANewVersion() {
+        Secret existing = secret("app/db", null, Map.of());
+        when(secrets.describeSecret(ARN, REGION)).thenReturn(existing);
+        when(secrets.updateSecret(eq(ARN), any(), any(), eq(REGION))).thenReturn(existing);
+        when(secrets.getSecretValue(ARN, null, null, REGION)).thenReturn(version("s3cret"));
+
+        StackResource r = resource();
+        r.setPhysicalId(ARN);
+        provisioner.provision(r, props("app/db", "s3cret", Map.of()), ctx(ARN));
+        assertEquals("none", r.getAttributes().get("FlociSecretGenerateIdentity"));
+        verify(secrets, never()).putSecretValue(anyString(), any(), any(), any(), anyString(), any());
+
+        ObjectNode props = mapper.createObjectNode().put("Name", "app/db");
+        props.putObject("GenerateSecretString").put("PasswordLength", 24);
+        provisioner.provision(r, props, ctx(ARN));
+
+        verify(secrets).putSecretValue(eq(ARN), argThat((String value) -> value != null && value.length() == 24),
+                isNull(), isNull(), eq(REGION), isNull());
+        assertEquals(props.get("GenerateSecretString").toString(), r.getAttributes().get("FlociSecretGenerateIdentity"));
+    }
+
     /** A record from before the identity was tracked keeps its value on the first update after the upgrade. */
     @Test
     void aGenerateConfigWithNoRecordedIdentityDoesNotRotate() {
