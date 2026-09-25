@@ -93,6 +93,16 @@ Supported subscription protocols:
 For `FilterPolicyScope=MessageBody`, nested policy objects descend into JSON objects and arrays.
 An object inside an array matches when one array element satisfies the complete nested policy.
 
+## HTTP and HTTPS endpoint addresses
+
+Floci posts the `SubscriptionConfirmation` and every notification to a subscribed `http`/`https`
+endpoint itself. An endpoint resolving to a link-local or cloud instance-metadata address
+(`169.254.0.0/16`, `fe80::/10`, `fd00:ec2::254`) is refused by `Subscribe` with `InvalidParameter`,
+and refused again at delivery so a host that only resolves that way later is not posted to. Loopback
+and private addresses stay allowed, since delivering to a neighbouring container is the normal case.
+An endpoint whose host does not resolve yet is accepted, as it is on AWS, and screened when delivery
+is attempted.
+
 ## Message size
 
 `MaximumMessageSize` is the per-topic limit, in bytes, on a published payload. It accepts `1024`
