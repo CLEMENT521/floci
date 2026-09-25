@@ -328,7 +328,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
      * claim carries the credential-scope service, which restates the caller whenever that service
      * serves Query at all; when it does not, {@code AwsQueryController} falls through to inferring
      * the service from the action name and can dispatch somewhere else entirely. Closing that needs
-     * the controller's inference shared rather than duplicated here, and is tracked separately.
+     * the controller's inference shared rather than duplicated here, and is tracked in
+     * <a href="https://github.com/floci-io/floci/issues/4296">#4296</a>.
      */
     private String servingCredentialScope(String claimedScope, ContainerRequestContext ctx) {
         if (ctx.getProperty(AwsProtocolClaimFilter.CLAIM_PROPERTY) instanceof ProtocolClaim claim
