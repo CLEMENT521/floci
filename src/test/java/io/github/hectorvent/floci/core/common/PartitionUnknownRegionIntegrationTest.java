@@ -2,9 +2,13 @@ package io.github.hectorvent.floci.core.common;
 
 import io.github.hectorvent.floci.testing.PartitionCleanup;
 import io.github.hectorvent.floci.testing.PartitionMatrix;
+import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+
+import java.nio.charset.StandardCharsets;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
@@ -26,6 +30,11 @@ class PartitionUnknownRegionIntegrationTest {
     @RegisterExtension
     final PartitionCleanup cleanup = new PartitionCleanup();
 
+    @BeforeAll
+    static void configureRestAssured() {
+        RestAssuredJsonUtils.configureAwsContentTypes();
+    }
+
     @Test
     void aQueryRequestSignedForAnUnknownRegionIsRefusedWithTheSignatureError() {
         given()
@@ -33,9 +42,35 @@ class PartitionUnknownRegionIntegrationTest {
             .contentType("application/x-www-form-urlencoded")
             .formParam("Action", "ListQueues")
         .when().post("/").then().statusCode(400)
+            .contentType(containsString("xml"))
+            .body("ErrorResponse.Error.Code", equalTo("InvalidSignatureException"))
+            .body("ErrorResponse.Error.Type", equalTo("Sender"))
+            .body("ErrorResponse.Error.Message", containsString(UNKNOWN));
+    }
+
+    @Test
+    void aJsonRequestSignedForAnUnknownRegionGetsTheJsonSignatureError() {
+        given()
+            .header("Authorization", PartitionMatrix.sigV4Auth(UNKNOWN, "sqs"))
+            .header("X-Amz-Target", "AmazonSQS.ListQueues")
+            .contentType("application/x-amz-json-1.0")
+            .body("{}")
+        .when().post("/").then().statusCode(400)
             .header("X-Amzn-Errortype", "InvalidSignatureException")
             .body("__type", equalTo("InvalidSignatureException"))
             .body("message", containsString(UNKNOWN));
+    }
+
+    /** A presigned POST's credential sits in the form body, out of the ingress filter's sight. */
+    @Test
+    void aPresignedPostSignedForAnUnknownRegionGetsS3sMalformedHeaderError() {
+        given()
+            .multiPart("key", "unknown-region.txt")
+            .multiPart("x-amz-credential", "AKID/20260215/" + UNKNOWN + "/s3/aws4_request")
+            .multiPart("file", "unknown-region.txt", "never stored".getBytes(StandardCharsets.UTF_8), "text/plain")
+        .when().post("/unknown-region-post-bucket").then().statusCode(400)
+            .body("Error.Code", equalTo("AuthorizationHeaderMalformed"))
+            .body("Error.Message", containsString(UNKNOWN));
     }
 
     @Test

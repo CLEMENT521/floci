@@ -2,13 +2,14 @@ package io.github.hectorvent.floci.core.common;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriInfo;
-import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.Map;
 import java.util.Optional;
@@ -303,6 +304,24 @@ class AccountContextFilterTest {
         when(ctx.getProperty(AccountContextFilter.PINNED_ACCOUNT_PROPERTY)).thenReturn("111122223333");
         filter.filter(ctx);
         assertEquals("111122223333", requestContext.getAccountId());
+    }
+
+    /** A Query SDK parses only an XML error body, and this filter runs before the protocol claim. */
+    @Test
+    void anUnknownScopeRegionOnAFormEncodedRequestGetsTheQueryXmlError() {
+        ContainerRequestContext ctx = mockContext(
+            "AWS4-HMAC-SHA256 Credential=AKID/20260617/polygondwanaland-west-1/sts/aws4_request, "
+                + "SignedHeaders=host, Signature=abc",
+            null);
+        when(ctx.getMediaType()).thenReturn(MediaType.APPLICATION_FORM_URLENCODED_TYPE);
+        filter.filter(ctx);
+        ArgumentCaptor<Response> aborted = ArgumentCaptor.forClass(Response.class);
+        verify(ctx).abortWith(aborted.capture());
+        String body = aborted.getValue().getEntity().toString();
+        assertEquals(400, aborted.getValue().getStatus());
+        assertEquals(MediaType.APPLICATION_XML_TYPE, aborted.getValue().getMediaType());
+        assertTrue(body.contains("<Code>InvalidSignatureException</Code>"), body);
+        assertTrue(body.contains("polygondwanaland-west-1"), body);
     }
 
     private ContainerRequestContext mockContext(String authHeader, String xAmzCredential) {

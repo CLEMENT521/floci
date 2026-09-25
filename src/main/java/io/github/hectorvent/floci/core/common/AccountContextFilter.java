@@ -8,6 +8,7 @@ import jakarta.inject.Inject;
 import jakarta.ws.rs.Priorities;
 import jakarta.ws.rs.container.ContainerRequestContext;
 import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.ext.Provider;
 import org.jboss.logging.Logger;
 
@@ -111,8 +112,9 @@ public class AccountContextFilter implements ContainerRequestFilter {
      * here it would mint ARNs and a storage namespace for a region that does not exist. The
      * region and partition stay on the request context so the error mappers see them. S3
      * clients get S3's own XML {@code AuthorizationHeaderMalformed} (the wording S3 and minio use
-     * for a wrong scope region); everyone else the JSON {@code InvalidSignatureException} the
-     * query and JSON protocols use for a scope that cannot be honoured.
+     * for a wrong scope region). Everyone else gets {@code InvalidSignatureException}, as a Query
+     * {@code <ErrorResponse>} for a form-encoded request and as JSON otherwise: this filter runs
+     * before the protocol claim, and a Query SDK cannot parse a JSON error body.
      */
     private void rejectUnknownRegion(ContainerRequestContext ctx, String region, Optional<String> signingName) {
         if (RegionResolver.isKnownRegion(region) || configProvider.get().partitions().allowUnknownRegions()) {
@@ -126,9 +128,19 @@ public class AccountContextFilter implements ContainerRequestFilter {
                             + "' is wrong; expecting a region AWS publishes."));
             return;
         }
-        ctx.abortWith(AwsProtocolClaimFilter.errorResponse(400, "InvalidSignatureException",
-                "Region '" + region + "' is not a region in any AWS partition. Sign the request for a "
-                        + "published region, or set floci.partitions.allow-unknown-regions=true."));
+        String message = "Region '" + region + "' is not a region in any AWS partition. Sign the request "
+                + "for a published region, or set floci.partitions.allow-unknown-regions=true.";
+        if (isFormEncoded(ctx.getMediaType())) {
+            ctx.abortWith(AwsQueryResponse.error("InvalidSignatureException", message, null, 400));
+            return;
+        }
+        ctx.abortWith(AwsProtocolClaimFilter.errorResponse(400, "InvalidSignatureException", message));
+    }
+
+    private static boolean isFormEncoded(MediaType mediaType) {
+        return mediaType != null
+                && "application".equalsIgnoreCase(mediaType.getType())
+                && "x-www-form-urlencoded".equalsIgnoreCase(mediaType.getSubtype());
     }
 
     /**
