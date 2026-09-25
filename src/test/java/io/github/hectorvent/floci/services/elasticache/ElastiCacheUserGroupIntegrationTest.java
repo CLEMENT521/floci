@@ -87,6 +87,30 @@ class ElastiCacheUserGroupIntegrationTest {
 
     @Test
     @Order(3)
+    void userGroupArnCarriesTheRequestRegion() {
+        given()
+            .formParam("Action", "CreateUserGroup")
+            .formParam("UserGroupId", "ug-it-regional")
+            .formParam("Engine", "redis")
+            .formParam("UserIds.member.1", DEFAULT_USER)
+            .header("Authorization",
+                    "AWS4-HMAC-SHA256 Credential=test/20260412/ap-south-1/elasticache/aws4_request")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(CREATE + "ARN", containsString(":ap-south-1:"));
+
+        request("DeleteUserGroup")
+            .formParam("UserGroupId", "ug-it-regional")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(3)
     void createUserGroupWithATakenIdIsRejected() {
         request("CreateUserGroup")
             .formParam("UserGroupId", USER_GROUP)

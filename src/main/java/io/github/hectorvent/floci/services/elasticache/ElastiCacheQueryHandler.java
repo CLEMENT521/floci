@@ -71,7 +71,7 @@ public class ElastiCacheQueryHandler {
             case "DescribeUsers"              -> handleDescribeUsers(params);
             case "ModifyUser"                 -> handleModifyUser(params);
             case "DeleteUser"                 -> handleDeleteUser(params);
-            case "CreateUserGroup"            -> handleCreateUserGroup(params);
+            case "CreateUserGroup"            -> handleCreateUserGroup(params, region);
             case "DescribeUserGroups"         -> handleDescribeUserGroups(params);
             case "ModifyUserGroup"            -> handleModifyUserGroup(params);
             case "DeleteUserGroup"            -> handleDeleteUserGroup(params);
@@ -324,10 +324,10 @@ public class ElastiCacheQueryHandler {
 
     // ── User groups ───────────────────────────────────────────────────────────
 
-    private Response handleCreateUserGroup(MultivaluedMap<String, String> params) {
+    private Response handleCreateUserGroup(MultivaluedMap<String, String> params, String region) {
         try {
             ElastiCacheUserGroup userGroup = service.createUserGroup(params.getFirst("UserGroupId"),
-                    params.getFirst("Engine"), extractMemberList(params, "UserIds.member."));
+                    params.getFirst("Engine"), extractMemberList(params, "UserIds.member."), region);
             return Response.ok(AwsQueryResponse.envelope("CreateUserGroup", AwsNamespaces.EC,
                     userGroupXml(userGroup))).build();
         } catch (AwsException e) {
@@ -390,7 +390,8 @@ public class ElastiCacheQueryHandler {
         }
         xml.end("ReplicationGroups");
         xml.start("ServerlessCaches").end("ServerlessCaches");
-        xml.elem("ARN", AwsArnUtils.Arn.of("elasticache", regionResolver.getDefaultRegion(),
+        String region = g.getRegion() != null ? g.getRegion() : regionResolver.getDefaultRegion();
+        xml.elem("ARN", AwsArnUtils.Arn.of("elasticache", region,
                 regionResolver.getAccountId(), "usergroup:" + g.getUserGroupId()).toString());
         return xml.build();
     }

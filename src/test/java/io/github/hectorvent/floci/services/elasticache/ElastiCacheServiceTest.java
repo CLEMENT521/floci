@@ -191,7 +191,7 @@ class ElastiCacheServiceTest {
         service.createUser("app-user-id", "app", AuthMode.PASSWORD,
                 List.of("app-pass"), "on ~* +@all", null);
         ElastiCacheUserGroup userGroup = service.createUserGroup("App-Group", "redis",
-                List.of("default-user-id", "app-user-id"));
+                List.of("default-user-id", "app-user-id"), "us-east-1");
         assertEquals("app-group", userGroup.getUserGroupId());
 
         service.modifyReplicationGroup("grp", List.of("App-Group"), null);
@@ -221,7 +221,7 @@ class ElastiCacheServiceTest {
         service.createReplicationGroup("open", "test", AuthMode.NO_AUTH, null, "us-east-1");
         service.createUser("default-user-id", "default", AuthMode.PASSWORD,
                 List.of("default-pass"), "on ~* +@all", null);
-        service.createUserGroup("grp-users", "redis", List.of("default-user-id"));
+        service.createUserGroup("grp-users", "redis", List.of("default-user-id"), "us-east-1");
 
         AwsException refused = assertThrows(AwsException.class,
                 () -> service.modifyReplicationGroup("open", List.of("grp-users"), null));
@@ -243,6 +243,57 @@ class ElastiCacheServiceTest {
     }
 
     @Test
+    void iamAuthIsLimitedToUserGroupMembersOnceTheCacheHasThem() {
+        service.createReplicationGroup("grp", "test", AuthMode.IAM, null, "us-east-1");
+        assertTrue(service.permitsIamUser("grp", "anyone"),
+                "a cache with no users associated keeps admitting any validated IAM user");
+
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUser("iam-user-id", "iam-app", AuthMode.IAM, List.of(), "on ~* +@all", null);
+        service.createUserGroup("iam-users", "redis", List.of("default-user-id", "iam-user-id"), "us-east-1");
+        service.modifyReplicationGroup("grp", List.of("iam-users"), null);
+
+        assertTrue(service.permitsIamUser("grp", "iam-app"));
+        assertFalse(service.permitsIamUser("grp", "anyone"));
+        assertFalse(service.permitsIamUser("grp", "default"), "a password user cannot connect with an IAM token");
+
+        service.modifyUserGroup("iam-users", null, List.of("iam-user-id"), null);
+        assertFalse(service.permitsIamUser("grp", "iam-app"), "removing the member revokes its access");
+    }
+
+    @Test
+    void failedCreateReleasesItsUserGroupReservation() {
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUserGroup("reserved", "redis", List.of("default-user-id"), "us-east-1");
+        when(containerManager.tryStart(anyString(), anyString())).thenThrow(new RuntimeException("docker down"));
+        ElastiCacheService.CreateReplicationGroupRequest request = new ElastiCacheService.CreateReplicationGroupRequest(
+                "grp", "test", AuthMode.IAM, null, "us-east-1", "redis", null, null, null, null, null,
+                null, null, null, null, null, null, ReplicationGroupSettings.defaults(), Map.of(),
+                List.of("reserved"));
+
+        assertThrows(RuntimeException.class, () -> service.createReplicationGroup(request));
+
+        service.deleteUserGroup("reserved");
+        assertEquals("UserGroupNotFound",
+                assertThrows(AwsException.class, () -> service.getUserGroup("reserved")).getErrorCode());
+    }
+
+    @Test
+    void modifyUserCannotMoveAMemberToAnEngineItsUserGroupRejects() {
+        service.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        service.createUserGroup("redis-users", "redis", List.of("default-user-id"), "us-east-1");
+
+        AwsException refused = assertThrows(AwsException.class,
+                () -> service.modifyUser("default-user-id", null, "valkey"));
+
+        assertEquals("InvalidParameterValue", refused.getErrorCode());
+        assertEquals("redis", service.getUser("default-user-id").getEngine());
+    }
+
+    @Test
     void userGroupMembershipFollowsAwsRules() {
         service.createUser("default-user-id", "default", AuthMode.PASSWORD,
                 List.of("default-pass"), "on ~* +@all", null);
@@ -255,20 +306,20 @@ class ElastiCacheServiceTest {
         service.createUser("open-user-id", "open", AuthMode.NO_AUTH, List.of(), "on ~* +@all", null);
 
         assertEquals("DefaultUserRequired", assertThrows(AwsException.class,
-                () -> service.createUserGroup("no-default", "redis", List.of("app-user-id"))).getErrorCode());
+                () -> service.createUserGroup("no-default", "redis", List.of("app-user-id"), "us-east-1")).getErrorCode());
         assertEquals("DuplicateUserName", assertThrows(AwsException.class,
                 () -> service.createUserGroup("two-defaults", "redis",
-                        List.of("default-user-id", "second-default-id"))).getErrorCode());
+                        List.of("default-user-id", "second-default-id"), "us-east-1")).getErrorCode());
         assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
                 () -> service.createUserGroup("mixed", "redis",
-                        List.of("default-user-id", "valkey-user-id"))).getErrorCode());
+                        List.of("default-user-id", "valkey-user-id"), "us-east-1")).getErrorCode());
         assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
-                () -> service.createUserGroup("vk-open", "valkey", List.of("open-user-id"))).getErrorCode());
+                () -> service.createUserGroup("vk-open", "valkey", List.of("open-user-id"), "us-east-1")).getErrorCode());
 
         // a valkey user group needs no default user
-        service.createUserGroup("vk-group", "valkey", List.of("valkey-user-id", "app-user-id"));
+        service.createUserGroup("vk-group", "valkey", List.of("valkey-user-id", "app-user-id"), "us-east-1");
         assertEquals("UserGroupAlreadyExists", assertThrows(AwsException.class,
-                () -> service.createUserGroup("VK-Group", "valkey", List.of("valkey-user-id"))).getErrorCode());
+                () -> service.createUserGroup("VK-Group", "valkey", List.of("valkey-user-id"), "us-east-1")).getErrorCode());
 
         service.deleteUser("app-user-id");
         assertEquals(Set.of("valkey-user-id"), service.getUserGroup("vk-group").getUserIds());
