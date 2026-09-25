@@ -15,6 +15,7 @@ public class ElastiCacheUserGroup {
     private String status;
     private Set<String> userIds = new LinkedHashSet<>();
     private Instant createdAt;
+    private String region;
 
     public ElastiCacheUserGroup() {}
 
@@ -43,4 +44,7 @@ public class ElastiCacheUserGroup {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public String getRegion() { return region; }
+    public void setRegion(String region) { this.region = region; }
 }
