@@ -199,33 +199,19 @@ class SecretsManagerCfnProvisionerTest {
         assertEquals(props.get("GenerateSecretString").toString(), r.getAttributes().get("FlociSecretGenerateIdentity"));
     }
 
-    /** A record from before the identity was tracked keeps a value its generate config could have produced. */
+    /**
+     * A record from before the identity was tracked cannot show whether its prior template used a
+     * literal SecretString or another generation policy, so it generates even when the current
+     * value already has the configured length.
+     */
     @Test
-    void aGenerateConfigWithNoRecordedIdentityDoesNotRotate() {
+    void aLegacyRecordWithAGenerateConfigGenerates() {
         Secret existing = secret("app/db", null, Map.of());
         when(secrets.describeSecret(ARN, REGION)).thenReturn(existing);
         when(secrets.updateSecret(eq(ARN), any(), any(), eq(REGION))).thenReturn(existing);
         when(secrets.getSecretValue(ARN, null, null, REGION)).thenReturn(version("x".repeat(32)));
         ObjectNode props = mapper.createObjectNode().put("Name", "app/db");
-        props.putObject("GenerateSecretString").put("PasswordLength", 32);
-
-        StackResource r = resource();
-        r.setPhysicalId(ARN);
-        provisioner.provision(r, props, ctx(ARN));
-
-        verify(secrets, never()).putSecretValue(anyString(), any(), any(), any(), anyString(), any());
-        assertEquals(props.get("GenerateSecretString").toString(), r.getAttributes().get("FlociSecretGenerateIdentity"));
-    }
-
-    /** A record from before the identity was tracked whose value was a literal SecretString still generates. */
-    @Test
-    void aLegacyRecordSwitchingFromALiteralValueGenerates() {
-        Secret existing = secret("app/db", null, Map.of());
-        when(secrets.describeSecret(ARN, REGION)).thenReturn(existing);
-        when(secrets.updateSecret(eq(ARN), any(), any(), eq(REGION))).thenReturn(existing);
-        when(secrets.getSecretValue(ARN, null, null, REGION)).thenReturn(version("s3cret"));
-        ObjectNode props = mapper.createObjectNode().put("Name", "app/db");
-        props.putObject("GenerateSecretString").put("PasswordLength", 32);
+        props.putObject("GenerateSecretString").put("PasswordLength", 32).put("ExcludePunctuation", true);
 
         StackResource r = resource();
         r.setPhysicalId(ARN);
@@ -233,32 +219,7 @@ class SecretsManagerCfnProvisionerTest {
 
         verify(secrets).putSecretValue(eq(ARN), argThat((String value) -> value != null && value.length() == 32),
                 isNull(), isNull(), eq(REGION), isNull());
-    }
-
-    /** With a template, a legacy value is kept only when its other fields match the template. */
-    @Test
-    void aLegacyRecordKeepsATemplateValueOnlyWhenItMatchesTheTemplate() {
-        Secret existing = secret("app/db", null, Map.of());
-        when(secrets.describeSecret(ARN, REGION)).thenReturn(existing);
-        when(secrets.updateSecret(eq(ARN), any(), any(), eq(REGION))).thenReturn(existing);
-        ObjectNode props = mapper.createObjectNode().put("Name", "app/db");
-        props.putObject("GenerateSecretString").put("PasswordLength", 16)
-                .put("SecretStringTemplate", "{\"username\":\"admin\"}").put("GenerateStringKey", "password");
-
-        when(secrets.getSecretValue(ARN, null, null, REGION))
-                .thenReturn(version("{\"username\":\"admin\",\"password\":\"" + "p".repeat(16) + "\"}"));
-        StackResource kept = resource();
-        kept.setPhysicalId(ARN);
-        provisioner.provision(kept, props, ctx(ARN));
-        verify(secrets, never()).putSecretValue(anyString(), any(), any(), any(), anyString(), any());
-
-        when(secrets.getSecretValue(ARN, null, null, REGION))
-                .thenReturn(version("{\"username\":\"root\",\"password\":\"" + "p".repeat(16) + "\"}"));
-        StackResource regenerated = resource();
-        regenerated.setPhysicalId(ARN);
-        provisioner.provision(regenerated, props, ctx(ARN));
-        verify(secrets).putSecretValue(eq(ARN), argThat((String value) -> value.contains("\"username\":\"admin\"")),
-                isNull(), isNull(), eq(REGION), isNull());
+        assertEquals(props.get("GenerateSecretString").toString(), r.getAttributes().get("FlociSecretGenerateIdentity"));
     }
 
     /** Name is create-only: dropping an explicit name is a replacement under a generated name, as on AWS. */

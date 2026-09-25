@@ -188,7 +188,7 @@ public class SecretsManagerCfnProvisioner implements CfnResourceProvisioner {
         if (secretString != null && !secretString.equals(currentValue(arn, region))) {
             secretsManagerService.putSecretValue(arn, secretString, null, null, region, null);
         } else if (secretString == null && generate != null
-                && generateConfigChanged(generateIdentity, priorGenerateIdentity, generate, arn, region)) {
+                && generateConfigChanged(generateIdentity, priorGenerateIdentity)) {
             secretsManagerService.putSecretValue(arn, generateSecretString(generate), null, null, region, null);
         }
         Map<String, String> current = new LinkedHashMap<>();
@@ -209,53 +209,13 @@ public class SecretsManagerCfnProvisioner implements CfnResourceProvisioner {
 
     /**
      * Whether the value has to be regenerated for {@code generate}. A record persisted before the
-     * identity was tracked has none to compare against, and its prior template may have used
-     * {@code SecretString} instead: it keeps its value only when that value has the shape
-     * {@code generate} produces, so an unchanged configuration does not rotate once after the
-     * upgrade while a switch from an explicit value still generates.
+     * identity was tracked has none to compare against, and nothing in the current value shows
+     * whether its prior template used {@code SecretString} or a different generation policy, so
+     * it generates. Before this reconciliation every update of such a secret replaced it with a
+     * newly generated value or failed outright, so no stored value was ever kept.
      */
-    private boolean generateConfigChanged(String generateIdentity, String priorGenerateIdentity,
-                                          JsonNode generate, String arn, String region) {
-        if (priorGenerateIdentity != null) {
-            return !Objects.equals(generateIdentity, priorGenerateIdentity);
-        }
-        return !matchesGenerateShape(currentValue(arn, region), generate);
-    }
-
-    private static boolean matchesGenerateShape(String value, JsonNode generate) {
-        if (value == null) {
-            return false;
-        }
-        JsonNode lengthNode = generate.get("PasswordLength");
-        int length = lengthNode != null && !lengthNode.isNull() ? lengthNode.asInt(32) : 32;
-        String template = textField(generate, "SecretStringTemplate");
-        String key = textField(generate, "GenerateStringKey");
-        if (template == null || key == null) {
-            return value.length() == length;
-        }
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode current = mapper.readTree(value);
-            JsonNode expected = mapper.readTree(template);
-            if (!(current instanceof ObjectNode currentObject) || !(expected instanceof ObjectNode expectedObject)
-                    || !currentObject.path(key).isTextual()) {
-                return false;
-            }
-            String password = currentObject.get(key).asText();
-            ObjectNode rest = currentObject.deepCopy();
-            rest.remove(key);
-            ObjectNode expectedRest = expectedObject.deepCopy();
-            expectedRest.remove(key);
-            return password.length() == length && rest.equals(expectedRest);
-        } catch (Exception e) {
-            LOG.debugv("Current secret value is not the configured template shape: {0}", e.getMessage());
-            return false;
-        }
-    }
-
-    private static String textField(JsonNode node, String name) {
-        JsonNode field = node.get(name);
-        return field == null || field.isNull() ? null : field.asText();
+    private static boolean generateConfigChanged(String generateIdentity, String priorGenerateIdentity) {
+        return priorGenerateIdentity == null || !Objects.equals(generateIdentity, priorGenerateIdentity);
     }
 
     private String currentValue(String arn, String region) {
