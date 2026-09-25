@@ -75,7 +75,7 @@ public class ElastiCacheService implements ResourceProvider {
      */
     private final StorageBackend<String, CacheCluster> memcachedClusters;
     private final StorageBackend<String, ElastiCacheUser> users;
-    private final StorageBackend<String, ElastiCacheUserGroup> userGroups;
+    private final AccountAwareStorageBackend<ElastiCacheUserGroup> userGroups;
     private final AccountAwareStorageBackend<CacheParameterGroup> parameterGroups;
     private final StorageBackend<String, CacheSubnetGroup> subnetGroups;
     private final ElastiCacheContainerManager containerManager;
@@ -119,7 +119,8 @@ public class ElastiCacheService implements ResourceProvider {
      */
     private final Object userGroupLock = new Object();
     /**
-     * User groups named by in-flight creates, with the number of creates holding each: a
+     * User groups named by in-flight creates, keyed by account and id (see
+     * {@link #userGroupReservationKey}) with the number of creates holding each: a
      * replication group is only stored once provisioning finishes, so the stored-groups scan
      * alone would let DeleteUserGroup remove a group that the new cache is about to use.
      */
@@ -230,17 +231,22 @@ public class ElastiCacheService implements ResourceProvider {
             for (String userGroupId : request.userGroupIds()) {
                 ElastiCacheUserGroup userGroup = getUserGroup(userGroupId);
                 requireAssociable(userGroup, request.authMode(), engine);
-                reserved.add(userGroup.getUserGroupId());
+                reserved.add(userGroupReservationKey(userGroup.getUserGroupId()));
             }
-            reserved.forEach(id -> reservedUserGroups.merge(id, 1, Integer::sum));
+            reserved.forEach(key -> reservedUserGroups.merge(key, 1, Integer::sum));
             return reserved;
         }
     }
 
     private void releaseUserGroups(List<String> reserved) {
         synchronized (userGroupLock) {
-            reserved.forEach(id -> reservedUserGroups.computeIfPresent(id, (key, count) -> count > 1 ? count - 1 : null));
+            reserved.forEach(key -> reservedUserGroups.computeIfPresent(key, (k, count) -> count > 1 ? count - 1 : null));
         }
+    }
+
+    // user groups are stored per account, so two accounts can each hold a group of the same id
+    private String userGroupReservationKey(String userGroupId) {
+        return userGroups.accountId() + "/" + userGroupId;
     }
 
     private ReplicationGroup createReplicationGroupWithSettings(CreateReplicationGroupRequest request,
@@ -1739,7 +1745,7 @@ public class ElastiCacheService implements ResourceProvider {
         synchronized (userGroupLock) {
             ElastiCacheUserGroup userGroup = getUserGroup(id);
             List<String> replicationGroupIds = replicationGroupIdsUsing(id);
-            if (!replicationGroupIds.isEmpty() || reservedUserGroups.containsKey(id)) {
+            if (!replicationGroupIds.isEmpty() || reservedUserGroups.containsKey(userGroupReservationKey(id))) {
                 throw new AwsException("InvalidUserGroupState",
                         "User group " + id + " is in use by a replication group. Disassociate it before deleting it.", 400);
             }

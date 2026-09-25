@@ -1193,6 +1193,61 @@ class ElastiCacheServiceTest {
     }
 
     @Test
+    void aUserGroupClaimHeldByOneAccountDoesNotBlockAnotherAccountsDeleteOfItsOwnSameNamedGroup()
+            throws InterruptedException {
+        ConcurrentHashMap<Thread, String> accountByThread = new ConcurrentHashMap<>();
+        RequestContext requestContext = mock(RequestContext.class);
+        when(requestContext.getAccountId()).thenAnswer(inv -> accountByThread.get(Thread.currentThread()));
+        @SuppressWarnings("unchecked")
+        Instance<RequestContext> requestContextInstance = mock(Instance.class);
+        when(requestContextInstance.get()).thenReturn(requestContext);
+        StorageFactory factory = mock(StorageFactory.class);
+        when(factory.create(anyString(), anyString(), any())).thenAnswer(inv ->
+                new AccountAwareStorageBackend<>(new InMemoryStorage<>(), requestContextInstance, "000000000000"));
+        ElastiCacheService svc = new ElastiCacheService(containerManager, proxyManager, clusterFormation,
+                factory, config, mock(Ec2Service.class),
+                new RegionResolver("us-east-1", "000000000000"), kmsService, provisioningIds);
+
+        CountDownLatch startedLatch = new CountDownLatch(1);
+        CountDownLatch releaseLatch = new CountDownLatch(1);
+        when(containerManager.tryStart(anyString(), anyString())).thenAnswer(inv -> {
+            startedLatch.countDown();
+            assertTrue(releaseLatch.await(5, TimeUnit.SECONDS), "test timed out waiting for release");
+            return new ElastiCacheContainerHandle("cid", "grp", "localhost", 6379);
+        });
+
+        // Account A: owns shared-ug and is provisioning a replication group that names it.
+        Thread accountA = new Thread(() -> {
+            accountByThread.put(Thread.currentThread(), "111111111111");
+            svc.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                    List.of("default-pass"), "on ~* +@all", null);
+            svc.createUserGroup("shared-ug", "redis", List.of("default-user-id"), "us-east-1");
+            svc.createReplicationGroup(new ElastiCacheService.CreateReplicationGroupRequest(
+                    "grp", "test", AuthMode.IAM, null, "us-east-1", "redis", null, null, null, null, null,
+                    null, null, null, null, null, null, ReplicationGroupSettings.defaults(), Map.of(),
+                    List.of("shared-ug")));
+        });
+        accountA.start();
+        assertTrue(startedLatch.await(5, TimeUnit.SECONDS), "create never reached container start");
+
+        // Account B: owns an unrelated shared-ug of its own; account A's claim must not hold it.
+        accountByThread.put(Thread.currentThread(), "222222222222");
+        svc.createUser("default-user-id", "default", AuthMode.PASSWORD,
+                List.of("default-pass"), "on ~* +@all", null);
+        svc.createUserGroup("shared-ug", "redis", List.of("default-user-id"), "us-east-1");
+        svc.deleteUserGroup("shared-ug");
+
+        // Account A's own user group is still held by its in-flight create.
+        accountByThread.put(Thread.currentThread(), "111111111111");
+        assertEquals("InvalidUserGroupState",
+                assertThrows(AwsException.class, () -> svc.deleteUserGroup("shared-ug")).getErrorCode());
+
+        releaseLatch.countDown();
+        accountA.join(5000);
+        assertEquals(Set.of("shared-ug"), svc.getReplicationGroup("grp").getUserGroupIds());
+    }
+
+    @Test
     void aFailedCreateReleasesItsClaimOnTheParameterGroup() {
         service.createCacheParameterGroup("custom-pg", "redis7", "in use", Map.of());
         when(containerManager.tryStart(anyString(), anyString()))
